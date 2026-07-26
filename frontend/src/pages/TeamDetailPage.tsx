@@ -33,15 +33,27 @@ type LoadState<T> = {
   isLoading: boolean;
 };
 
+type TeamDetailTab = "fixtures" | "squad" | "stats" | "news";
+
 const FIXTURE_FETCH_SIZE = 100;
 const TEAM_FIXTURE_PAGE_SIZE = 10;
+
+function teamDetailTab(value: string | null): TeamDetailTab {
+  if (value === "squad" || value === "stats" || value === "news") {
+    return value;
+  }
+  return "fixtures";
+}
 
 export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus: AuthStatus; currentUser: CurrentUser | null; season: number }) {
   const { teamId } = useParams();
   const [searchParams] = useSearchParams();
   const numericTeamId = Number(teamId);
-  const activeTab = searchParams.get("tab") === "news" ? "news" : "info";
-  const loadRequestId = useRef(0);
+  const activeTab = teamDetailTab(searchParams.get("tab"));
+  const teamRequestId = useRef(0);
+  const fixturesRequestId = useRef(0);
+  const playersRequestId = useRef(0);
+  const rankingsRequestId = useRef(0);
   const newsRequestId = useRef(0);
   const activeNewsTeamId = useRef(numericTeamId);
   activeNewsTeamId.current = numericTeamId;
@@ -53,17 +65,17 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
   const [playersState, setPlayersState] = useState<LoadState<PlayerSummary[]>>({
     data: null,
     error: "",
-    isLoading: true,
+    isLoading: false,
   });
   const [fixturesState, setFixturesState] = useState<LoadState<FixtureSummary[]>>({
     data: null,
     error: "",
-    isLoading: true,
+    isLoading: false,
   });
   const [rankState, setRankState] = useState<LoadState<TeamPlayerRanking[]>>({
     data: null,
     error: "",
-    isLoading: true,
+    isLoading: false,
   });
   const [newsState, setNewsState] = useState<LoadState<TeamNewsResponse>>({
     data: null,
@@ -90,20 +102,14 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
     if (!Number.isFinite(numericTeamId) || numericTeamId <= 0) {
       const error = "올바른 팀 ID가 아닙니다.";
       setTeamState({ data: null, error, isLoading: false });
-      setPlayersState({ data: null, error, isLoading: false });
-      setFixturesState({ data: null, error, isLoading: false });
-      setRankState({ data: null, error, isLoading: false });
       return;
     }
 
-    const requestId = loadRequestId.current + 1;
-    loadRequestId.current = requestId;
+    const requestId = teamRequestId.current + 1;
+    teamRequestId.current = requestId;
     let isCurrent = true;
-    const isLatest = () => isCurrent && loadRequestId.current === requestId;
+    const isLatest = () => isCurrent && teamRequestId.current === requestId;
     setTeamState({ data: null, error: "", isLoading: true });
-    setPlayersState({ data: null, error: "", isLoading: true });
-    setFixturesState({ data: null, error: "", isLoading: true });
-    setRankState({ data: null, error: "", isLoading: true });
 
     fetchTeamDetails(numericTeamId)
       .then((data) => {
@@ -121,48 +127,38 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
         }
       });
 
+    return () => {
+      isCurrent = false;
+    };
+  }, [numericTeamId]);
+
+  useEffect(() => {
+    fixturesRequestId.current += 1;
+    playersRequestId.current += 1;
+    rankingsRequestId.current += 1;
     setFixturePage(0);
+    setFixturesState({ data: null, error: "", isLoading: false });
+    setPlayersState({ data: null, error: "", isLoading: false });
+    setRankState({ data: null, error: "", isLoading: false });
+  }, [numericTeamId, season]);
 
-    fetchTeamPlayers(numericTeamId, season)
-      .then((players) => {
-        if (isLatest()) {
-          setPlayersState({ data: players, error: "", isLoading: false });
-        }
-      })
-      .catch((error) => {
-        if (isLatest()) {
-          setPlayersState({
-            data: null,
-            error: error instanceof Error ? error.message : "팀 선수 목록을 불러오지 못했습니다.",
-            isLoading: false,
-          });
-        }
-      });
-
-    fetchTeamPlayerRankings(numericTeamId, season)
-      .then((response) => {
-        if (isLatest()) {
-          setRankState({ data: response.rows ?? [], error: "", isLoading: false });
-        }
-      })
-      .catch((error) => {
-        if (isLatest()) {
-          setRankState({
-            data: null,
-            error: error instanceof Error ? error.message : "팀 선수 통계를 불러오지 못했습니다.",
-            isLoading: false,
-          });
-        }
-      });
-
+  useEffect(() => {
+    if (activeTab !== "fixtures" || !Number.isFinite(numericTeamId) || numericTeamId <= 0) {
+      return;
+    }
+    const requestId = fixturesRequestId.current + 1;
+    fixturesRequestId.current = requestId;
+    let isCurrent = true;
+    setFixturePage(0);
+    setFixturesState({ data: null, error: "", isLoading: true });
     fetchFixtures({ season, teamId: numericTeamId, size: FIXTURE_FETCH_SIZE })
       .then((response) => {
-        if (isLatest()) {
+        if (isCurrent && fixturesRequestId.current === requestId) {
           setFixturesState({ data: response.content ?? [], error: "", isLoading: false });
         }
       })
       .catch((error) => {
-        if (isLatest()) {
+        if (isCurrent && fixturesRequestId.current === requestId) {
           setFixturesState({
             data: null,
             error: error instanceof Error ? error.message : "팀 경기 일정을 불러오지 못했습니다.",
@@ -170,11 +166,66 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
           });
         }
       });
-
     return () => {
       isCurrent = false;
     };
-  }, [numericTeamId, season]);
+  }, [activeTab, numericTeamId, season]);
+
+  useEffect(() => {
+    if (activeTab !== "squad" || !Number.isFinite(numericTeamId) || numericTeamId <= 0) {
+      return;
+    }
+    const requestId = playersRequestId.current + 1;
+    playersRequestId.current = requestId;
+    let isCurrent = true;
+    setPlayersState({ data: null, error: "", isLoading: true });
+    fetchTeamPlayers(numericTeamId, season)
+      .then((players) => {
+        if (isCurrent && playersRequestId.current === requestId) {
+          setPlayersState({ data: players, error: "", isLoading: false });
+        }
+      })
+      .catch((error) => {
+        if (isCurrent && playersRequestId.current === requestId) {
+          setPlayersState({
+            data: null,
+            error: error instanceof Error ? error.message : "팀 선수 목록을 불러오지 못했습니다.",
+            isLoading: false,
+          });
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeTab, numericTeamId, season]);
+
+  useEffect(() => {
+    if (activeTab !== "stats" || !Number.isFinite(numericTeamId) || numericTeamId <= 0) {
+      return;
+    }
+    const requestId = rankingsRequestId.current + 1;
+    rankingsRequestId.current = requestId;
+    let isCurrent = true;
+    setRankState({ data: null, error: "", isLoading: true });
+    fetchTeamPlayerRankings(numericTeamId, season)
+      .then((response) => {
+        if (isCurrent && rankingsRequestId.current === requestId) {
+          setRankState({ data: response.rows ?? [], error: "", isLoading: false });
+        }
+      })
+      .catch((error) => {
+        if (isCurrent && rankingsRequestId.current === requestId) {
+          setRankState({
+            data: null,
+            error: error instanceof Error ? error.message : "팀 선수 통계를 불러오지 못했습니다.",
+            isLoading: false,
+          });
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeTab, numericTeamId, season]);
 
   useEffect(() => {
     setNewsLanguage("ko");
@@ -287,15 +338,11 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
       return;
     }
 
-    const requestId = loadRequestId.current + 1;
-    loadRequestId.current = requestId;
-    const isLatest = () => loadRequestId.current === requestId;
+    const requestId = teamRequestId.current + 1;
+    teamRequestId.current = requestId;
+    const isLatest = () => teamRequestId.current === requestId;
 
     setTeamState({ data: null, error: "", isLoading: true });
-    setPlayersState({ data: null, error: "", isLoading: true });
-    setFixturesState({ data: null, error: "", isLoading: true });
-    setRankState({ data: null, error: "", isLoading: true });
-    setFixturePage(0);
 
     fetchTeamDetails(numericTeamId)
       .then((data) => {
@@ -313,46 +360,24 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
         }
       });
 
-    fetchTeamPlayers(numericTeamId, season)
-      .then((players) => {
-        if (isLatest()) {
-          setPlayersState({ data: players, error: "", isLoading: false });
-        }
-      })
-      .catch((error) => {
-        if (isLatest()) {
-          setPlayersState({
-            data: null,
-            error: error instanceof Error ? error.message : "팀 선수 목록을 불러오지 못했습니다.",
-            isLoading: false,
-          });
-        }
-      });
+  }
 
-    fetchTeamPlayerRankings(numericTeamId, season)
-      .then((response) => {
-        if (isLatest()) {
-          setRankState({ data: response.rows ?? [], error: "", isLoading: false });
-        }
-      })
-      .catch((error) => {
-        if (isLatest()) {
-          setRankState({
-            data: null,
-            error: error instanceof Error ? error.message : "팀 선수 통계를 불러오지 못했습니다.",
-            isLoading: false,
-          });
-        }
-      });
-
+  function retryFixtures() {
+    if (!Number.isFinite(numericTeamId) || numericTeamId <= 0) {
+      return;
+    }
+    const requestId = fixturesRequestId.current + 1;
+    fixturesRequestId.current = requestId;
+    setFixturePage(0);
+    setFixturesState({ data: null, error: "", isLoading: true });
     fetchFixtures({ season, teamId: numericTeamId, size: FIXTURE_FETCH_SIZE })
       .then((response) => {
-        if (isLatest()) {
+        if (fixturesRequestId.current === requestId) {
           setFixturesState({ data: response.content ?? [], error: "", isLoading: false });
         }
       })
       .catch((error) => {
-        if (isLatest()) {
+        if (fixturesRequestId.current === requestId) {
           setFixturesState({
             data: null,
             error: error instanceof Error ? error.message : "팀 경기 일정을 불러오지 못했습니다.",
@@ -362,40 +387,27 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
       });
   }
 
-  function retryFixtures() {
-    if (!Number.isFinite(numericTeamId) || numericTeamId <= 0) {
-      return;
-    }
-    setFixturePage(0);
-    setFixturesState({ data: null, error: "", isLoading: true });
-    fetchFixtures({ season, teamId: numericTeamId, size: FIXTURE_FETCH_SIZE })
-      .then((response) => {
-        setFixturesState({ data: response.content ?? [], error: "", isLoading: false });
-      })
-      .catch((error) => {
-        setFixturesState({
-          data: null,
-          error: error instanceof Error ? error.message : "팀 경기 일정을 불러오지 못했습니다.",
-          isLoading: false,
-        });
-      });
-  }
-
   function retryPlayers() {
     if (!Number.isFinite(numericTeamId) || numericTeamId <= 0) {
       return;
     }
+    const requestId = playersRequestId.current + 1;
+    playersRequestId.current = requestId;
     setPlayersState({ data: null, error: "", isLoading: true });
     fetchTeamPlayers(numericTeamId, season)
       .then((players) => {
-        setPlayersState({ data: players, error: "", isLoading: false });
+        if (playersRequestId.current === requestId) {
+          setPlayersState({ data: players, error: "", isLoading: false });
+        }
       })
       .catch((error) => {
-        setPlayersState({
-          data: null,
-          error: error instanceof Error ? error.message : "팀 선수 목록을 불러오지 못했습니다.",
-          isLoading: false,
-        });
+        if (playersRequestId.current === requestId) {
+          setPlayersState({
+            data: null,
+            error: error instanceof Error ? error.message : "팀 선수 목록을 불러오지 못했습니다.",
+            isLoading: false,
+          });
+        }
       });
   }
 
@@ -403,17 +415,23 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
     if (!Number.isFinite(numericTeamId) || numericTeamId <= 0) {
       return;
     }
+    const requestId = rankingsRequestId.current + 1;
+    rankingsRequestId.current = requestId;
     setRankState({ data: null, error: "", isLoading: true });
     fetchTeamPlayerRankings(numericTeamId, season)
       .then((response) => {
-        setRankState({ data: response.rows ?? [], error: "", isLoading: false });
+        if (rankingsRequestId.current === requestId) {
+          setRankState({ data: response.rows ?? [], error: "", isLoading: false });
+        }
       })
       .catch((error) => {
-        setRankState({
-          data: null,
-          error: error instanceof Error ? error.message : "팀 선수 통계를 불러오지 못했습니다.",
-          isLoading: false,
-        });
+        if (rankingsRequestId.current === requestId) {
+          setRankState({
+            data: null,
+            error: error instanceof Error ? error.message : "팀 선수 통계를 불러오지 못했습니다.",
+            isLoading: false,
+          });
+        }
       });
   }
 
@@ -560,25 +578,34 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
         <TeamVenueCard venue={teamState.data.venue} />
       </div>
       <nav className="team-detail-tabs" aria-label="팀 상세 메뉴">
-        <Link className={activeTab === "info" ? "active" : ""} to={`/teams/${numericTeamId}`}>
-          정보
+        <Link className={activeTab === "fixtures" ? "active" : ""} to={`/teams/${numericTeamId}`}>
+          경기 일정
+        </Link>
+        <Link className={activeTab === "squad" ? "active" : ""} to={`/teams/${numericTeamId}?tab=squad`}>
+          선수단
+        </Link>
+        <Link className={activeTab === "stats" ? "active" : ""} to={`/teams/${numericTeamId}?tab=stats`}>
+          선수 통계
         </Link>
         <Link className={activeTab === "news" ? "active" : ""} to={`/teams/${numericTeamId}?tab=news`}>
           뉴스
         </Link>
       </nav>
-      {activeTab === "info" ? (
-        <>
-          <TeamFixturePanel
-            fixturePage={fixturePage}
-            fixturesState={fixturesState}
-            onRetry={retryFixtures}
-            setFixturePage={setFixturePage}
-          />
-          <TeamPlayersPanel onRetry={retryPlayers} playersState={playersState} />
-          <TeamPlayerRanksPanel onRetry={retryRankings} rankState={rankState} />
-        </>
-      ) : (
+      {activeTab === "fixtures" ? (
+        <TeamFixturePanel
+          fixturePage={fixturePage}
+          fixturesState={fixturesState}
+          onRetry={retryFixtures}
+          setFixturePage={setFixturePage}
+        />
+      ) : null}
+      {activeTab === "squad" ? (
+        <TeamPlayersPanel onRetry={retryPlayers} playersState={playersState} />
+      ) : null}
+      {activeTab === "stats" ? (
+        <TeamPlayerRanksPanel onRetry={retryRankings} rankState={rankState} />
+      ) : null}
+      {activeTab === "news" ? (
         <TeamNewsPanel
           canRefresh={currentUser?.role === "ADMIN"}
           isRefreshing={isNewsRefreshing}
@@ -593,7 +620,7 @@ export function TeamDetailPage({ authStatus, currentUser, season }: { authStatus
           translationErrors={newsTranslationErrors}
           onTranslate={translateNewsArticle}
         />
-      )}
+      ) : null}
     </section>
   );
 }
@@ -1034,6 +1061,11 @@ function TeamPlayerRanksPanel({ rankState, onRetry }: { rankState: LoadState<Tea
               {group.rows.map((row, index) => (
                 <Link className="team-rank-row" key={row.playerId} to={`/players/${row.playerId}`}>
                   <span>{index + 1}</span>
+                  {row.photoUrl ? (
+                    <img src={row.photoUrl} alt="" className="player-thumb" />
+                  ) : (
+                    <span className="player-thumb placeholder" aria-hidden="true" />
+                  )}
                   <strong>{displayLocalizedName(row.playerNameKo, row.playerName)}</strong>
                   <em>{group.value(row)}</em>
                 </Link>

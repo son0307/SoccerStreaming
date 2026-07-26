@@ -3798,7 +3798,7 @@ h2 {
 
 .team-detail-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid #dce6da;
   border-radius: 10px;
@@ -3819,6 +3819,26 @@ h2 {
 .team-detail-tabs a.active {
   background: #1b5e20;
   color: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .team-detail-tabs {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .team-detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .team-detail-tabs a {
+    flex: 1 0 96px;
+    padding: 11px 10px;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
 }
 
 .team-news-panel {
@@ -4445,7 +4465,7 @@ h2 {
 
 .team-rank-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) max-content;
+  grid-template-columns: 28px 34px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
   min-height: 40px;

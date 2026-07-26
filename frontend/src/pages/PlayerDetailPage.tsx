@@ -253,6 +253,7 @@ export function PlayerDetailPage({ authStatus, currentUser, season }: { authStat
         isFavoriteLoading={isFavoriteLoading}
         onToggleFavorite={toggleFavorite}
         profile={profileState.data}
+        season={season}
         seasonState={seasonState}
         isAdmin={currentUser?.role === "ADMIN"}
       />
@@ -269,6 +270,7 @@ export function PlayerDetailPage({ authStatus, currentUser, season }: { authStat
 
 function PlayerHero({
   profile,
+  season,
   seasonState,
   canUseFavorite,
   isFavorite,
@@ -278,6 +280,7 @@ function PlayerHero({
   isAdmin,
 }: {
   profile: PlayerProfile;
+  season: number;
   seasonState: LoadState<PlayerSeasonSummary>;
   canUseFavorite: boolean;
   isFavorite: boolean;
@@ -323,16 +326,16 @@ function PlayerHero({
           <span>{profile.weight ? `${profile.weight}kg` : "체중 정보 없음"}</span>
         </div>
       </div>
-      <SeasonTeamSummary state={seasonState} />
+      <SeasonTeamSummary season={season} state={seasonState} />
     </article>
   );
 }
 
-function SeasonTeamSummary({ state }: { state: LoadState<PlayerSeasonSummary> }) {
+function SeasonTeamSummary({ season, state }: { season: number; state: LoadState<PlayerSeasonSummary> }) {
   if (state.isLoading) {
     return (
       <div className="player-team-card">
-        <strong className="player-team-card-title">선택 시즌 소속팀</strong>
+        <strong className="player-team-card-title">{season} 시즌 소속팀</strong>
         <div>
           <strong>소속팀 확인 중</strong>
           <p>선택 시즌 기준으로 불러오고 있습니다.</p>
@@ -344,7 +347,7 @@ function SeasonTeamSummary({ state }: { state: LoadState<PlayerSeasonSummary> })
   if (state.error) {
     return (
       <div className="player-team-card">
-        <strong className="player-team-card-title">선택 시즌 소속팀</strong>
+        <strong className="player-team-card-title">{season} 시즌 소속팀</strong>
         <div>
           <strong>소속팀 정보를 불러오지 못했습니다.</strong>
           <p>{state.error}</p>
@@ -357,7 +360,7 @@ function SeasonTeamSummary({ state }: { state: LoadState<PlayerSeasonSummary> })
   if (!teams.length) {
     return (
       <div className="player-team-card">
-        <strong className="player-team-card-title">선택 시즌 소속팀</strong>
+        <strong className="player-team-card-title">{season} 시즌 소속팀</strong>
         <div>
           <strong>해당 시즌 소속팀 정보 없음</strong>
           <p>선택 시즌의 EPL 기록이 없습니다.</p>
@@ -368,7 +371,7 @@ function SeasonTeamSummary({ state }: { state: LoadState<PlayerSeasonSummary> })
 
   return (
     <div className="player-team-card">
-      <strong className="player-team-card-title">선택 시즌 소속팀</strong>
+      <strong className="player-team-card-title">{season} 시즌 소속팀</strong>
       <div className="player-season-team-list">
         {teams.map((team) => (
           <Link className="player-season-team-row" to={`/teams/${team.teamId}`} key={team.teamId}>
