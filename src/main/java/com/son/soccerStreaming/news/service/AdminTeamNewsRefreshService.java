@@ -2,12 +2,14 @@ package com.son.soccerStreaming.news.service;
 
 import com.son.soccerStreaming.global.exception.CustomException;
 import com.son.soccerStreaming.global.exception.ErrorCode;
+import com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory;
+import com.son.soccerStreaming.global.externalapi.ExternalApiException;
+import com.son.soccerStreaming.global.externalapi.ExternalApiInvocationContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import com.son.soccerStreaming.global.externalapi.ExternalApiInvocationContext;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +41,8 @@ public class AdminTeamNewsRefreshService {
                     translation.translated(),
                     translation.failed()
             );
+        } catch (ExternalApiException e) {
+            throw new CustomException(errorCodeFor(e), e);
         } catch (CustomException e) {
             throw e;
         } catch (Exception e) {
@@ -47,6 +51,16 @@ public class AdminTeamNewsRefreshService {
         } finally {
             refreshingTeamIds.remove(teamId);
         }
+    }
+
+    private ErrorCode errorCodeFor(ExternalApiException exception) {
+        if (exception.getCategory() == ExternalApiErrorCategory.QUOTA_EXHAUSTED) {
+            return ErrorCode.EXTERNAL_API_QUOTA_EXHAUSTED;
+        }
+        if (exception.getCategory() == ExternalApiErrorCategory.RATE_LIMITED) {
+            return ErrorCode.EXTERNAL_API_RATE_LIMITED;
+        }
+        return ErrorCode.NEWS_REFRESH_FAILED;
     }
 
     public record RefreshResult(

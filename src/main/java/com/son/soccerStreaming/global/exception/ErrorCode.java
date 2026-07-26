@@ -21,6 +21,10 @@ public enum ErrorCode {
     INVALID_ADMIN_MEDIA_OBJECT(HttpStatus.BAD_REQUEST, "업로드된 이미지가 요청한 대상 또는 파일 조건과 일치하지 않습니다."),
     ADMIN_SYNC_TOO_FREQUENT(HttpStatus.TOO_MANY_REQUESTS, "Manual sync was requested too frequently. Please wait before retrying."),
 
+    // 429 TOO_MANY_REQUESTS
+    EXTERNAL_API_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "외부 API 호출 제한에 도달했습니다. 잠시 후 다시 시도해 주세요."),
+    EXTERNAL_API_QUOTA_EXHAUSTED(HttpStatus.TOO_MANY_REQUESTS, "외부 API 사용량이 소진되었습니다. 사용량 또는 요금제를 확인해 주세요."),
+
     // 401 UNAUTHORIZED
     LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "이메일 또는 비밀번호가 올바르지 않습니다."),
     AUTHENTICATION_REQUIRED(HttpStatus.UNAUTHORIZED, "로그인이 필요합니다."),
