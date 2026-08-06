@@ -1,9 +1,11 @@
 package com.son.soccerStreaming.apifootball.scheduler;
 
+import com.son.soccerStreaming.apifootball.service.ApiFootballInjuryReferenceSyncException;
+import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
+import com.son.soccerStreaming.apifootball.service.ApiFootballSyncStatusService;
+import com.son.soccerStreaming.global.externalapi.ExternalApiException;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import com.son.soccerStreaming.apifootball.service.ApiFootballSyncStatusService;
-import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -15,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -25,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReference;
-import com.son.soccerStreaming.global.externalapi.ExternalApiException;
 
 /**
  * API-Football 동기화 실패를 UUID 기반 Batch로 묶고, 개별 Unit 재시도와 최종 집계 결과를 관리한다.
@@ -42,6 +42,7 @@ public class ApiFootballSyncFailureRetryScheduler {
     private static final String RETRY_NON_RETRYABLE_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_NON_RETRYABLE";
     private static final String RETRY_BATCH_EVENT_ACTION = "api-football-sync-retry-batch";
     private static final String RETRY_BATCH_COMPLETED_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED";
+    private static final String RETRY_BATCH_SUPERSEDED_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_BATCH_SUPERSEDED";
     private static final int MAX_FAILED_KEYS_IN_LOG = 20;
 
     private final ApiFootballSyncStatusService syncStatusService;
@@ -49,7 +50,7 @@ public class ApiFootballSyncFailureRetryScheduler {
     private final ScheduledExecutorService retryExecutor;
     private final Map<String, RetryState> retryStates = new ConcurrentHashMap<>();
     private final Map<UUID, RetryBatchState> retryBatches = new ConcurrentHashMap<>();
-    private final Set<String> terminalFailedExecutions = ConcurrentHashMap.newKeySet();
+    private final Map<String, RetryBatchState> activeBatchesByExecutionKey = new ConcurrentHashMap<>();
 
     @Value("${api-football.sync.failure-retry.enabled:true}")
     private boolean enabled;
@@ -100,9 +101,9 @@ public class ApiFootballSyncFailureRetryScheduler {
     /**
      * 기존 전체 작업 호출부를 단일 Unit UUID Batch로 변환한다.
      */
-    public UUID schedule(String retryKey, String executionKey, String description,
+    public void schedule(String retryKey, String executionKey, String description,
                          Exception failure, Runnable retryAction) {
-        return scheduleBatch(ApiFootballRetryBatchRequest.wholeTask(
+        scheduleBatch(ApiFootballRetryBatchRequest.wholeTask(
                 executionKey,
                 description,
                 failure,
@@ -113,65 +114,54 @@ public class ApiFootballSyncFailureRetryScheduler {
     /**
      * 한 번의 동기화에서 실패한 전체 작업 또는 팀·Chunk 목록을 하나의 UUID Batch로 등록한다.
      */
-    public UUID scheduleBatch(ApiFootballRetryBatchRequest request) {
+    public synchronized void scheduleBatch(ApiFootballRetryBatchRequest request) {
         UUID batchId = UUID.randomUUID();
         int configuredMaxAttempts = Math.max(0, maxAttempts);
         RetryBatchState batch = new RetryBatchState(batchId, request, configuredMaxAttempts);
         retryBatches.put(batchId, batch);
 
-        // 새 Batch는 같은 실행 범위의 과거 최종 실패를 대체하지만, 현재 진행 중인 다른 Batch는 건드리지 않는다.
-        terminalFailedExecutions.remove(request.executionKey());
+        RetryBatchState previousBatch = activeBatchesByExecutionKey.put(request.executionKey(), batch);
+        if (previousBatch != null && previousBatch != batch) {
+            supersedeBatch(previousBatch, batch);
+        }
 
         if (!enabled) {
             batch.failAll(request.initialFailure());
             completeBatch(batch);
-            return batchId;
+            return;
         }
         if (!shouldRetry(request.initialFailure())) {
             batch.failAll(request.initialFailure());
             logInitialTerminalFailure(RETRY_NON_RETRYABLE_EVENT_CODE, batch, request.initialFailure(),
                     "API-Football sync retry batch was not scheduled for a non-retryable error.");
             completeBatch(batch);
-            return batchId;
+            return;
         }
         if (configuredMaxAttempts == 0) {
             batch.failAll(request.initialFailure());
             logInitialTerminalFailure(RETRY_EXHAUSTED_EVENT_CODE, batch, request.initialFailure(),
                     "API-Football sync retry batch has no configured attempts.");
             completeBatch(batch);
-            return batchId;
+            return;
         }
 
-        List<Map.Entry<String, RetryState>> acceptedRetryStates = new ArrayList<>();
+        List<Map.Entry<String, RetryState>> scheduledRetryStates = new ArrayList<>();
         for (RetryUnitState unit : batch.units()) {
             RetryState state = new RetryState(batchId, request.executionKey(), unit,
                     configuredMaxAttempts);
-            RetryState existingState = retryStates.putIfAbsent(unit.retryKey(), state);
-            if (existingState != null) {
-                batch.cancelUnit(unit.retryKey());
-                log.warn("API-Football sync failure retry already pending. retryKey={}, batchId={}, existingBatchId={}, executionKey={}",
-                        unit.retryKey(), batchId, existingState.batchId(), existingState.executionKey());
-                continue;
-            }
-            acceptedRetryStates.add(Map.entry(unit.retryKey(), state));
+            retryStates.put(unit.retryKey(), state);
+            scheduledRetryStates.add(Map.entry(unit.retryKey(), state));
         }
 
-        if (acceptedRetryStates.isEmpty()) {
-            retryBatches.remove(batchId, batch);
-            batch.cancel();
-            return batchId;
-        }
-
-        int acceptedUnits = acceptedRetryStates.size();
+        int scheduledUnits = scheduledRetryStates.size();
         // 상태를 RETRY_PENDING으로 먼저 저장해야 지연 시간이 0이어도 성공/실패 결과를 대기 상태가 덮어쓰지 않는다.
         syncStatusOfRetryKey(batch.firstRetryKey()).ifPresent(status ->
                 syncStatusService.recordRetryPendingByKey(status.syncKey(), status.displayName(),
                         "Retry batch %s scheduled. units=%d, description=%s"
-                                .formatted(batchId, acceptedUnits, request.description())));
-        acceptedRetryStates.forEach(entry ->
+                                .formatted(batchId, scheduledUnits, request.description())));
+        scheduledRetryStates.forEach(entry ->
                 scheduleNext(entry.getKey(), entry.getValue(), request.initialFailure(), false));
         completeBatchIfFinished(batch);
-        return batchId;
     }
 
     /**
@@ -186,7 +176,7 @@ public class ApiFootballSyncFailureRetryScheduler {
     /**
      * 새로운 정규 동기화가 성공하면 같은 실행 범위의 대기 Batch와 과거 실패 표시를 제거한다.
      */
-    public int cancelPendingByExecutionKey(String executionKey) {
+    public synchronized int cancelPendingByExecutionKey(String executionKey) {
         int cancelledCount = 0;
         for (RetryBatchState batch : new ArrayList<>(retryBatches.values())) {
             if (!batch.executionKey().equals(executionKey)
@@ -205,7 +195,7 @@ public class ApiFootballSyncFailureRetryScheduler {
             log.info("API-Football retry batch cancelled after synchronization success. batchId={}, executionKey={}, units={}",
                     batch.batchId(), executionKey, batch.totalUnits());
         }
-        terminalFailedExecutions.remove(executionKey);
+        activeBatchesByExecutionKey.remove(executionKey);
         return cancelledCount;
     }
 
@@ -218,7 +208,7 @@ public class ApiFootballSyncFailureRetryScheduler {
         retryStates.clear();
         retryBatches.values().forEach(RetryBatchState::cancel);
         retryBatches.clear();
-        terminalFailedExecutions.clear();
+        activeBatchesByExecutionKey.clear();
         retryExecutor.shutdownNow();
     }
 
@@ -347,20 +337,24 @@ public class ApiFootballSyncFailureRetryScheduler {
     /**
      * Batch 결과를 상태 저장소와 구조화 로그에 정확히 한 번 반영한다.
      */
-    private void completeBatch(RetryBatchState batch) {
+    private synchronized void completeBatch(RetryBatchState batch) {
         if (!batch.markCompleted()) {
             return;
         }
         retryBatches.remove(batch.batchId(), batch);
 
+        if (!activeBatchesByExecutionKey.remove(batch.executionKey(), batch)) {
+            log.debug("Ignore stale API-Football retry batch completion. batchId={}, executionKey={}",
+                    batch.batchId(), batch.executionKey());
+            return;
+        }
+
         Optional<SyncStatusTarget> target = syncStatusOfRetryKey(batch.firstRetryKey());
         Exception failure = batch.firstFailure().orElse(batch.initialFailure());
         if (batch.failedUnits() > 0) {
-            terminalFailedExecutions.add(batch.executionKey());
             target.ifPresent(status ->
                     syncStatusService.recordFailureByKey(status.syncKey(), status.displayName(), failure));
-        } else if (!hasActiveBatch(batch.executionKey())
-                && !terminalFailedExecutions.contains(batch.executionKey())) {
+        } else {
             target.ifPresent(status ->
                     syncStatusService.recordSuccessByKey(status.syncKey(), status.displayName()));
         }
@@ -369,11 +363,31 @@ public class ApiFootballSyncFailureRetryScheduler {
     }
 
     /**
-     * 같은 실행 범위에 아직 끝나지 않은 다른 Batch가 있는지 확인한다.
+     * 같은 실행 키로 등록된 이전 Batch를 취소하고 최신 Batch만 유효하게 유지한다.
      */
-    private boolean hasActiveBatch(String executionKey) {
-        return retryBatches.values().stream()
-                .anyMatch(batch -> batch.executionKey().equals(executionKey) && !batch.isCompleted());
+    private void supersedeBatch(RetryBatchState previousBatch, RetryBatchState replacementBatch) {
+        if (!previousBatch.markCompleted()) {
+            return;
+        }
+        retryBatches.remove(previousBatch.batchId(), previousBatch);
+        previousBatch.cancel();
+        for (RetryUnitState unit : previousBatch.units()) {
+            RetryState state = retryStates.get(unit.retryKey());
+            if (state != null && state.batchId().equals(previousBatch.batchId())
+                    && retryStates.remove(unit.retryKey(), state)) {
+                state.cancel();
+            }
+        }
+        log.atInfo()
+                .addKeyValue("event.action", RETRY_BATCH_EVENT_ACTION)
+                .addKeyValue("event.outcome", "cancelled")
+                .addKeyValue("event.code", RETRY_BATCH_SUPERSEDED_EVENT_CODE)
+                .addKeyValue("external_api.provider", "API_FOOTBALL")
+                .addKeyValue("api_football.retry_batch_id", previousBatch.batchId())
+                .addKeyValue("api_football.replacement_retry_batch_id", replacementBatch.batchId())
+                .addKeyValue("api_football.execution_key", previousBatch.executionKey())
+                .addKeyValue("api_football.retry_total_units", previousBatch.totalUnits())
+                .log("API-Football retry batch was superseded by the latest batch.");
     }
 
     /**
@@ -422,11 +436,23 @@ public class ApiFootballSyncFailureRetryScheduler {
      * 외부 API 예외가 있으면 Provider 오류 분류를 구조화 로그에 덧붙인다.
      */
     private void addExternalFailureFields(org.slf4j.spi.LoggingEventBuilder failureLog, Exception exception) {
-        externalApiException(exception).ifPresent(externalFailure -> failureLog
-                .addKeyValue("external_api.operation", externalFailure.getOperation())
-                .addKeyValue("external_api.error_category", externalFailure.getCategory().name())
-                .addKeyValue("external_api.retryable", externalFailure.isRetryable())
-                .addKeyValue("http.response.status_code", externalFailure.getHttpStatus()));
+        externalApiException(exception).ifPresent(externalFailure -> {
+            failureLog
+                    .addKeyValue("external_api.operation", externalFailure.getOperation())
+                    .addKeyValue("external_api.error_category", externalFailure.getCategory().name())
+                    .addKeyValue("external_api.retryable", externalFailure.isRetryable())
+                    .addKeyValue("http.response.status_code", externalFailure.getHttpStatus());
+            if (externalFailure instanceof ApiFootballInjuryReferenceSyncException injuryFailure) {
+                failureLog
+                        .addKeyValue("api_football.invalid_payload_count", injuryFailure.getInvalidPayloadCount())
+                        .addKeyValue("api_football.missing_fixture_count", injuryFailure.getMissingFixtureCount())
+                        .addKeyValue("api_football.missing_fixture_ids", injuryFailure.getMissingFixtureIds())
+                        .addKeyValue("api_football.missing_team_count", injuryFailure.getMissingTeamCount())
+                        .addKeyValue("api_football.missing_team_ids", injuryFailure.getMissingTeamIds())
+                        .addKeyValue("api_football.missing_player_count", injuryFailure.getMissingPlayerCount())
+                        .addKeyValue("api_football.missing_player_ids", injuryFailure.getMissingPlayerIds());
+            }
+        });
     }
 
     /**
@@ -887,16 +913,6 @@ public class ApiFootballSyncFailureRetryScheduler {
             RetryUnitState unit = units.get(retryKey);
             if (unit != null && !unit.isTerminal()) {
                 unit.fail(failure);
-            }
-        }
-
-        /**
-         * Batch 등록 시 이미 처리 중인 중복 retryKey를 취소 상태로 표시한다.
-         */
-        synchronized void cancelUnit(String retryKey) {
-            RetryUnitState unit = units.get(retryKey);
-            if (unit != null && !unit.isTerminal()) {
-                unit.cancel();
             }
         }
 

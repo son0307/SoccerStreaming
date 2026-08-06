@@ -100,14 +100,25 @@ class ApiFootballSyncFailureRetrySchedulerTest {
     }
 
     @Test
-    void doesNotRegisterTheSameRetryKeyTwice() {
-        scheduler.schedule("teams:39:2025", "teams:league=39; season=2025",
-                "team sync", new RuntimeException(), () -> { });
-        scheduler.schedule("teams:39:2025", "teams:league=39; season=2025",
-                "team sync", new RuntimeException(), () -> { });
+    void latestBatchSupersedesAnOlderBatchWithTheSameExecutionKey() {
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        Runnable oldAction = mock(Runnable.class);
+        Runnable latestAction = mock(Runnable.class);
 
-        assertThat(scheduler.pendingRetryCount()).isEqualTo(1);
-        verify(executor, times(1)).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        scheduler.schedule("teams:39:2025", "teams:league=39; season=2025",
+                "old team sync", new RuntimeException(), oldAction);
+        scheduler.schedule("teams:39:2025", "teams:league=39; season=2025",
+                "latest team sync", new RuntimeException(), latestAction);
+
+        verify(executor, times(2)).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
+        taskCaptor.getAllValues().get(0).run();
+        taskCaptor.getAllValues().get(1).run();
+
+        assertThat(scheduler.pendingRetryCount()).isZero();
+        verify(oldAction, never()).run();
+        verify(latestAction).run();
+        assertThat(eventsWithCode("API_FOOTBALL_SYNC_RETRY_BATCH_SUPERSEDED")).hasSize(1);
+        verify(syncStatusService).recordSuccessByKey("teams:2025", "Teams 2025");
     }
 
     @Test
@@ -125,7 +136,7 @@ class ApiFootballSyncFailureRetrySchedulerTest {
                 "other teams", new RuntimeException(), unrelatedAction);
         verify(executor, times(3)).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
 
-        assertThat(scheduler.cancelPendingByExecutionKey("teams:league=39; season=2025")).isEqualTo(2);
+        assertThat(scheduler.cancelPendingByExecutionKey("teams:league=39; season=2025")).isEqualTo(1);
         taskCaptor.getAllValues().get(0).run();
         taskCaptor.getAllValues().get(1).run();
 
@@ -141,10 +152,15 @@ class ApiFootballSyncFailureRetrySchedulerTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         String executionKey = "players:league=39; season=2025";
 
-        scheduler.schedule("registered-players:39:2025:team:1", executionKey,
-                "team 1", new RuntimeException(), () -> { });
-        scheduler.schedule("registered-players:39:2025:team:2", executionKey,
-                "team 2", new RuntimeException(), () -> { });
+        scheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                executionKey,
+                "player team retry",
+                new RuntimeException(),
+                List.of(
+                        new ApiFootballRetryUnit("registered-players:39:2025:team:1", "team 1", () -> { }),
+                        new ApiFootballRetryUnit("registered-players:39:2025:team:2", "team 2", () -> { })
+                )
+        ));
         verify(executor, times(2)).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
 
         taskCaptor.getAllValues().get(0).run();
@@ -161,12 +177,17 @@ class ApiFootballSyncFailureRetrySchedulerTest {
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         String executionKey = "players:league=39; season=2025";
 
-        scheduler.schedule("registered-players:39:2025:team:1", executionKey,
-                "team 1", new RuntimeException(), () -> {
-                    throw nonRetryableFailure();
-                });
-        scheduler.schedule("registered-players:39:2025:team:2", executionKey,
-                "team 2", new RuntimeException(), () -> { });
+        scheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                executionKey,
+                "player team retry",
+                new RuntimeException(),
+                List.of(
+                        new ApiFootballRetryUnit("registered-players:39:2025:team:1", "team 1", () -> {
+                            throw nonRetryableFailure();
+                        }),
+                        new ApiFootballRetryUnit("registered-players:39:2025:team:2", "team 2", () -> { })
+                )
+        ));
         verify(executor, times(2)).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
 
         taskCaptor.getAllValues().forEach(Runnable::run);

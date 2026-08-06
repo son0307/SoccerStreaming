@@ -20,7 +20,8 @@ class ApiFootballInjurySyncSchedulerTest {
         );
         try {
             org.assertj.core.api.Assertions.assertThat(retryScheduler.shouldRetry(
-                    new ApiFootballInjuryReferenceSyncException(1, 0, 0)
+                    new ApiFootballInjuryReferenceSyncException(
+                            0, 1, 0, 0, java.util.List.of(100L), java.util.List.of(), java.util.List.of())
             )).isFalse();
         } finally {
             retryScheduler.shutdown();
@@ -32,7 +33,8 @@ class ApiFootballInjurySyncSchedulerTest {
         ApiFootballInjurySyncService syncService = mock(ApiFootballInjurySyncService.class);
         ApiFootballSyncFailureRetryScheduler retryScheduler = mock(ApiFootballSyncFailureRetryScheduler.class);
         ApiFootballInjuryReferenceSyncException failure =
-                new ApiFootballInjuryReferenceSyncException(1, 0, 0);
+                new ApiFootballInjuryReferenceSyncException(
+                        0, 1, 0, 0, java.util.List.of(100L), java.util.List.of(), java.util.List.of());
         org.mockito.Mockito.when(syncService.syncInjuries(39, 2025)).thenThrow(failure);
         ApiFootballInjurySyncScheduler scheduler = new ApiFootballInjurySyncScheduler(
                 syncService,

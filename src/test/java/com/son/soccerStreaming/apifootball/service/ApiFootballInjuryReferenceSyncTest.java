@@ -2,6 +2,7 @@ package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballInjuryDto;
+import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.fixture.repository.FixtureRepository;
 import com.son.soccerStreaming.player.repository.PlayerAbsenceRepository;
 import com.son.soccerStreaming.team.entity.Team;
@@ -16,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -26,7 +28,7 @@ import static org.mockito.Mockito.when;
 class ApiFootballInjuryReferenceSyncTest {
 
     @Test
-    void missingFixtureKeepsProgressAndRaisesRetryableReferenceFailure() {
+    void missingFixtureIsNotFoundAndIncludesTheMissingId() {
         ApiFootballClient client = mock(ApiFootballClient.class);
         FixtureRepository fixtureRepository = mock(FixtureRepository.class);
         TeamRepository teamRepository = mock(TeamRepository.class);
@@ -54,6 +56,9 @@ class ApiFootballInjuryReferenceSyncTest {
                     org.assertj.core.api.Assertions.assertThat(failure.getMissingFixtureCount()).isEqualTo(1);
                     org.assertj.core.api.Assertions.assertThat(failure.getMissingTeamCount()).isZero();
                     org.assertj.core.api.Assertions.assertThat(failure.getMissingPlayerCount()).isZero();
+                    assertThat(failure.getCategory())
+                            .isEqualTo(com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory.NOT_FOUND);
+                    assertThat(failure.getMissingFixtureIds()).containsExactly(100L);
                 });
 
         verify(reporter).update(1, 0, 1, 0);
@@ -67,7 +72,7 @@ class ApiFootballInjuryReferenceSyncTest {
     }
 
     @Test
-    void invalidPayloadIsReportedButDoesNotScheduleReferenceRetry() {
+    void invalidPayloadIsRecordedAsInvalidResponseFailure() {
         ApiFootballClient client = mock(ApiFootballClient.class);
         ApiFootballSyncStatusService statusService = mock(ApiFootballSyncStatusService.class);
         SyncProgressReporter reporter = mock(SyncProgressReporter.class);
@@ -83,10 +88,68 @@ class ApiFootballInjuryReferenceSyncTest {
                 statusService
         );
 
-        service.syncInjuries(39, 2025, reporter);
+        assertThatThrownBy(() -> service.syncInjuries(39, 2025, reporter))
+                .isInstanceOfSatisfying(ApiFootballInjuryReferenceSyncException.class, failure -> {
+                    assertThat(failure.getCategory())
+                            .isEqualTo(com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory.INVALID_RESPONSE);
+                    assertThat(failure.getInvalidPayloadCount()).isEqualTo(1);
+                    assertThat(failure.getMissingFixtureIds()).isEmpty();
+                    assertThat(failure.getMissingTeamIds()).isEmpty();
+                    assertThat(failure.getMissingPlayerIds()).isEmpty();
+                });
 
         verify(reporter).update(1, 0, 1, 0);
-        verify(statusService).recordSuccess("injuries", "Injuries", 2025);
+        verify(statusService).recordFailure(
+                org.mockito.ArgumentMatchers.eq("injuries"),
+                org.mockito.ArgumentMatchers.eq("Injuries"),
+                org.mockito.ArgumentMatchers.eq(2025),
+                org.mockito.ArgumentMatchers.any(ApiFootballInjuryReferenceSyncException.class)
+        );
+        verify(statusService, never()).recordSuccess("injuries", "Injuries", 2025);
+    }
+
+    @Test
+    void missingTeamAndPlayerIdsAreIncludedInNotFoundFailure() {
+        ApiFootballClient client = mock(ApiFootballClient.class);
+        FixtureRepository fixtureRepository = mock(FixtureRepository.class);
+        TeamRepository teamRepository = mock(TeamRepository.class);
+        ApiFootballPlayerSyncService playerSyncService = mock(ApiFootballPlayerSyncService.class);
+        ApiFootballSyncStatusService statusService = mock(ApiFootballSyncStatusService.class);
+        when(client.getInjuries(39, 2025)).thenReturn(List.of(
+                injury(101L, 201L, 301L),
+                injury(102L, 202L, 302L)
+        ));
+        when(fixtureRepository.findByFixtureId(101L)).thenReturn(Optional.of(mock(Fixture.class)));
+        when(fixtureRepository.findByFixtureId(102L)).thenReturn(Optional.of(mock(Fixture.class)));
+        when(teamRepository.findByTeamId(201L)).thenReturn(Optional.empty());
+        Team team = Team.builder().teamId(202L).name("Chelsea").build();
+        when(teamRepository.findByTeamId(202L)).thenReturn(Optional.of(team));
+        when(playerSyncService.findOrFetchPlayer(
+                org.mockito.ArgumentMatchers.eq(302L),
+                org.mockito.ArgumentMatchers.eq("Player"),
+                org.mockito.ArgumentMatchers.same(team),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull()
+        )).thenReturn(Optional.empty());
+        ApiFootballInjurySyncService service = new ApiFootballInjurySyncService(
+                client,
+                fixtureRepository,
+                teamRepository,
+                mock(PlayerAbsenceRepository.class),
+                playerSyncService,
+                immediateTransactionTemplate(),
+                mock(EntityManager.class),
+                statusService
+        );
+
+        assertThatThrownBy(() -> service.syncInjuries(39, 2025))
+                .isInstanceOfSatisfying(ApiFootballInjuryReferenceSyncException.class, failure -> {
+                    assertThat(failure.getCategory())
+                            .isEqualTo(com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory.NOT_FOUND);
+                    assertThat(failure.getMissingTeamIds()).containsExactly(201L);
+                    assertThat(failure.getMissingPlayerIds()).containsExactly(302L);
+                });
     }
 
     private TransactionTemplate immediateTransactionTemplate() {
