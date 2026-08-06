@@ -1,6 +1,9 @@
 package com.son.soccerStreaming.news.service;
 
 import com.son.soccerStreaming.news.client.SerpApiNewsClient;
+import com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory;
+import com.son.soccerStreaming.global.externalapi.ExternalApiException;
+import com.son.soccerStreaming.global.externalapi.ExternalApiProvider;
 import com.son.soccerStreaming.team.entity.Team;
 import com.son.soccerStreaming.team.repository.TeamRepository;
 import org.junit.jupiter.api.Test;
@@ -33,13 +36,32 @@ class NewsCollectionServiceTest {
         var article = new SerpApiNewsClient.SearchArticle(
                 "Chelsea title", "https://bbc.com/sport/football/articles/1", "BBC Sport", Instant.now());
         when(teamRepository.findAllByOrderByNameAsc()).thenReturn(List.of(first, second));
-        when(serpApiNewsClient.searchTeamNews("Arsenal")).thenThrow(new IllegalStateException("failed"));
+        when(serpApiNewsClient.searchTeamNews("Arsenal")).thenThrow(new ExternalApiException(
+                ExternalApiProvider.SERP_API,
+                "search-team-news",
+                ExternalApiErrorCategory.TIMEOUT,
+                null,
+                true,
+                null,
+                "failed",
+                null
+        ));
         when(serpApiNewsClient.searchTeamNews("Chelsea")).thenReturn(List.of(article));
         when(newsPersistenceService.saveTeamArticles(eq(2L), any(), any())).thenReturn(1);
 
         var result = service.collectAllTeams();
 
-        assertThat(result).isEqualTo(new NewsCollectionService.CollectionResult(2, 1, 1, 1));
+        assertThat(result.totalTeams()).isEqualTo(2);
+        assertThat(result.succeededTeams()).isEqualTo(1);
+        assertThat(result.failedTeams()).isEqualTo(1);
+        assertThat(result.savedArticles()).isEqualTo(1);
+        assertThat(result.failures()).containsExactly(new NewsCollectionService.FailedTeam(
+                1L,
+                "Arsenal",
+                ExternalApiErrorCategory.TIMEOUT,
+                true,
+                null
+        ));
         verify(newsPersistenceService).saveTeamArticles(eq(2L), eq(List.of(article)), any());
     }
 }

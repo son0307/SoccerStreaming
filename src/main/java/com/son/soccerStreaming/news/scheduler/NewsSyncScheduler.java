@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 public class NewsSyncScheduler {
 
     private final NewsCollectionService collectionService;
+    private final NewsCollectionFailureRetryScheduler collectionRetryScheduler;
     private final NewsTitleTranslationService translationService;
     private final NewsCleanupService cleanupService;
 
@@ -23,6 +24,7 @@ public class NewsSyncScheduler {
     public void syncNews() {
         try {
             NewsCollectionService.CollectionResult result = collectionService.collectAllTeams();
+            collectionRetryScheduler.replacePendingRetries(result.failures());
             log.info("Team news collection completed. totalTeams={}, succeededTeams={}, failedTeams={}, savedArticles={}",
                     result.totalTeams(), result.succeededTeams(), result.failedTeams(), result.savedArticles());
         } catch (Exception e) {

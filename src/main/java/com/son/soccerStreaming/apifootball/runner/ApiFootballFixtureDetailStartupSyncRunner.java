@@ -1,6 +1,8 @@
 package com.son.soccerStreaming.apifootball.runner;
 
 import com.son.soccerStreaming.apifootball.scheduler.ApiFootballSyncFailureRetryScheduler;
+import com.son.soccerStreaming.apifootball.scheduler.ApiFootballRetryBatchRequest;
+import com.son.soccerStreaming.apifootball.scheduler.ApiFootballRetryUnit;
 import com.son.soccerStreaming.apifootball.service.ApiFootballFixtureDetailSyncException;
 import com.son.soccerStreaming.apifootball.service.ApiFootballFixtureDetailSyncService;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
@@ -12,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Slf4j
 @Component
@@ -42,21 +46,27 @@ public class ApiFootballFixtureDetailStartupSyncRunner implements CommandLineRun
     }
 
     private void scheduleRetry(String syncKey, Exception exception) {
-        if (!failureRetryScheduler.shouldRetry(exception)) {
-            return;
-        }
         if (exception instanceof ApiFootballFixtureDetailSyncException fixtureDetailException) {
-            int index = 1;
-            for (java.util.List<Long> chunk : fixtureDetailException.getFailedChunks()) {
-                String fixtureIds = chunk.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining("-"));
-                failureRetryScheduler.schedule(
-                        "startup:fixture-details:%s:chunk:%s".formatted(season, fixtureIds),
-                        syncKey,
-                        "startup fixture detail sync season=%s chunk=%s".formatted(season, index++),
-                        exception,
-                        () -> apiFootballFixtureDetailSyncService.syncFixtureDetailsByIds(chunk, false)
-                );
-            }
+            java.util.concurrent.atomic.AtomicInteger index = new java.util.concurrent.atomic.AtomicInteger(1);
+            List<ApiFootballRetryUnit> units = fixtureDetailException.getFailedChunks().stream()
+                    .map(chunk -> {
+                        String fixtureIds = chunk.stream()
+                                .map(String::valueOf)
+                                .collect(java.util.stream.Collectors.joining("-"));
+                        return new ApiFootballRetryUnit(
+                                "startup:fixture-details:%s:chunk:%s".formatted(season, fixtureIds),
+                                "startup fixture detail sync season=%s chunk=%s"
+                                        .formatted(season, index.getAndIncrement()),
+                                () -> apiFootballFixtureDetailSyncService.syncFixtureDetailsByIds(chunk, false)
+                        );
+                    })
+                    .toList();
+            failureRetryScheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                    syncKey,
+                    "startup fixture detail sync season=%s".formatted(season),
+                    exception,
+                    units
+            ));
             return;
         }
 

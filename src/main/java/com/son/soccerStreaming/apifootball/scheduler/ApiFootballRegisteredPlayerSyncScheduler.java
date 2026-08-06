@@ -10,6 +10,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -49,19 +51,22 @@ public class ApiFootballRegisteredPlayerSyncScheduler {
     }
 
     private void scheduleRetry(String syncKey, Exception exception) {
-        if (!failureRetryScheduler.shouldRetry(exception)) {
-            return;
-        }
         if (exception instanceof ApiFootballRegisteredPlayerSyncException playerSyncException) {
-            for (Long teamId : playerSyncException.getFailedTeamIds()) {
-                failureRetryScheduler.schedule(
-                        "registered-players:%s:%s:team:%s".formatted(league, season, teamId),
-                        syncKey,
-                        "registered player sync league=%s season=%s teamId=%s".formatted(league, season, teamId),
-                        exception,
-                        () -> apiFootballPlayerSyncService.syncRegisteredPlayersByTeamId(teamId, league, season, delayMs)
-                );
-            }
+            List<ApiFootballRetryUnit> units = playerSyncException.getFailedTeamIds().stream()
+                    .map(teamId -> new ApiFootballRetryUnit(
+                            "registered-players:%s:%s:team:%s".formatted(league, season, teamId),
+                            "registered player sync league=%s season=%s teamId=%s"
+                                    .formatted(league, season, teamId),
+                            () -> apiFootballPlayerSyncService
+                                    .syncRegisteredPlayersByTeamId(teamId, league, season, delayMs)
+                    ))
+                    .toList();
+            failureRetryScheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                    syncKey,
+                    "registered player sync league=%s season=%s".formatted(league, season),
+                    exception,
+                    units
+            ));
             return;
         }
 
