@@ -42,6 +42,7 @@ public class ApiFootballSyncFailureRetryScheduler {
     private static final String RETRY_NON_RETRYABLE_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_NON_RETRYABLE";
     private static final String RETRY_BATCH_EVENT_ACTION = "api-football-sync-retry-batch";
     private static final String RETRY_BATCH_COMPLETED_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED";
+    private static final String RETRY_BATCH_CANCELLED_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_BATCH_CANCELLED";
     private static final String RETRY_BATCH_SUPERSEDED_EVENT_CODE = "API_FOOTBALL_SYNC_RETRY_BATCH_SUPERSEDED";
     private static final int MAX_FAILED_KEYS_IN_LOG = 20;
 
@@ -183,6 +184,9 @@ public class ApiFootballSyncFailureRetryScheduler {
                     || !retryBatches.remove(batch.batchId(), batch)) {
                 continue;
             }
+            if (!batch.markCompleted()) {
+                continue;
+            }
             batch.cancel();
             for (RetryUnitState unit : batch.units()) {
                 RetryState state = retryStates.get(unit.retryKey());
@@ -192,8 +196,7 @@ public class ApiFootballSyncFailureRetryScheduler {
                     cancelledCount++;
                 }
             }
-            log.info("API-Football retry batch cancelled after synchronization success. batchId={}, executionKey={}, units={}",
-                    batch.batchId(), executionKey, batch.totalUnits());
+            logBatchCancelledAfterSyncSuccess(batch);
         }
         activeBatchesByExecutionKey.remove(executionKey);
         return cancelledCount;
@@ -388,6 +391,31 @@ public class ApiFootballSyncFailureRetryScheduler {
                 .addKeyValue("api_football.execution_key", previousBatch.executionKey())
                 .addKeyValue("api_football.retry_total_units", previousBatch.totalUnits())
                 .log("API-Football retry batch was superseded by the latest batch.");
+    }
+
+    /**
+     * 정상 동기화 성공으로 재시도할 필요가 없어진 Batch의 최종 취소 집계를 구조화 로그로 남긴다.
+     */
+    private void logBatchCancelledAfterSyncSuccess(RetryBatchState batch) {
+        var batchLog = log.atInfo()
+                .addKeyValue("event.action", RETRY_BATCH_EVENT_ACTION)
+                .addKeyValue("event.outcome", "cancelled")
+                .addKeyValue("event.code", RETRY_BATCH_CANCELLED_EVENT_CODE)
+                .addKeyValue("external_api.provider", "API_FOOTBALL")
+                .addKeyValue("api_football.retry_batch_id", batch.batchId())
+                .addKeyValue("api_football.execution_key", batch.executionKey())
+                .addKeyValue("api_football.retry_scope", batch.scope().name())
+                .addKeyValue("api_football.retry_total_units", batch.totalUnits())
+                .addKeyValue("api_football.retry_succeeded_units", batch.succeededUnits())
+                .addKeyValue("api_football.retry_failed_units", batch.failedUnits())
+                .addKeyValue("api_football.retry_cancelled_units", batch.cancelledUnits())
+                .addKeyValue("api_football.retry_duration_ms", batch.durationMillis())
+                .addKeyValue("api_football.retry_cancel_reason", "synchronization_success");
+        syncStatusOfRetryKey(batch.firstRetryKey()).ifPresent(status -> batchLog
+                .addKeyValue("api_football.sync_key", status.syncKey())
+                .addKeyValue("api_football.sync_task", status.syncKey().split(":")[0]));
+        batchLog.log("API-Football retry batch cancelled after synchronization success. description={}",
+                batch.description());
     }
 
     /**

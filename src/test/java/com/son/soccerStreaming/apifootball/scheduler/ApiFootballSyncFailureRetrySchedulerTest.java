@@ -145,6 +145,17 @@ class ApiFootballSyncFailureRetrySchedulerTest {
         verify(secondAction, never()).run();
         verify(unrelatedAction, never()).run();
         verify(executor, times(3)).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+
+        ILoggingEvent cancelledEvent = eventWithCode("API_FOOTBALL_SYNC_RETRY_BATCH_CANCELLED");
+        assertThat(keyValue(cancelledEvent, "event.outcome")).isEqualTo("cancelled");
+        assertThat(keyValue(cancelledEvent, "api_football.execution_key"))
+                .isEqualTo("teams:league=39; season=2025");
+        assertThat(keyValue(cancelledEvent, "api_football.retry_total_units")).isEqualTo(1);
+        assertThat(keyValue(cancelledEvent, "api_football.retry_cancelled_units")).isEqualTo(1);
+        assertThat(keyValue(cancelledEvent, "api_football.retry_cancel_reason"))
+                .isEqualTo("synchronization_success");
+        verify(syncStatusService, never()).recordSuccessByKey(any(), any());
+        verify(syncStatusService, never()).recordFailureByKey(any(), any(), any());
     }
 
     @Test

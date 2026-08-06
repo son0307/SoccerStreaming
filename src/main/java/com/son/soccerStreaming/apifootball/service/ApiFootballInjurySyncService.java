@@ -62,7 +62,7 @@ public class ApiFootballInjurySyncService {
             log.debug("API-Football injury chunk started. chunk={}/{}, size={}", i + 1, chunks.size(), chunk.size());
             try {
                 InjurySyncSummary chunkSummary = syncInjuryChunk(chunk);
-                summary = summary.plus(chunkSummary);
+                summary.merge(chunkSummary);
                 syncedCount += chunkSummary.syncedCount();
                 processedUnits += chunk.size();
                 int skippedCount = chunkSummary.skippedCount();
@@ -119,7 +119,7 @@ public class ApiFootballInjurySyncService {
         InjurySyncSummary result = transactionTemplate.execute(status -> {
             InjurySyncSummary summary = InjurySyncSummary.empty();
             for (ApiFootballInjuryDto.InjuryResponse injury : injuries) {
-                summary = summary.add(upsertInjury(injury));
+                summary.add(upsertInjury(injury));
             }
             // Clear each injury chunk so bulk admin sync does not keep every absence managed until completion.
             entityManager.flush();
@@ -216,72 +216,69 @@ public class ApiFootballInjurySyncService {
         }
     }
 
-    private record InjurySyncSummary(
-            int syncedCount,
-            int invalidPayloadCount,
-            int missingFixtureCount,
-            int missingTeamCount,
-            int missingPlayerCount,
-            Set<Long> missingFixtureIdSet,
-            Set<Long> missingTeamIdSet,
-            Set<Long> missingPlayerIdSet
-    ) {
+    private static final class InjurySyncSummary {
+
+        private int syncedCount;
+        private int invalidPayloadCount;
+        private int missingFixtureCount;
+        private int missingTeamCount;
+        private int missingPlayerCount;
+        private final Set<Long> missingFixtureIdSet = new LinkedHashSet<>();
+        private final Set<Long> missingTeamIdSet = new LinkedHashSet<>();
+        private final Set<Long> missingPlayerIdSet = new LinkedHashSet<>();
+
         private static InjurySyncSummary empty() {
-            return new InjurySyncSummary(0, 0, 0, 0, 0,
-                    new LinkedHashSet<>(), new LinkedHashSet<>(), new LinkedHashSet<>());
+            return new InjurySyncSummary();
         }
 
-        private InjurySyncSummary add(InjurySyncResult result) {
-            Set<Long> fixtureIds = new LinkedHashSet<>(missingFixtureIdSet);
-            Set<Long> teamIds = new LinkedHashSet<>(missingTeamIdSet);
-            Set<Long> playerIds = new LinkedHashSet<>(missingPlayerIdSet);
-            return switch (result.outcome()) {
-                case SYNCED -> new InjurySyncSummary(
-                        syncedCount + 1, invalidPayloadCount,
-                        missingFixtureCount, missingTeamCount, missingPlayerCount,
-                        fixtureIds, teamIds, playerIds);
-                case INVALID_PAYLOAD -> new InjurySyncSummary(
-                        syncedCount, invalidPayloadCount + 1,
-                        missingFixtureCount, missingTeamCount, missingPlayerCount,
-                        fixtureIds, teamIds, playerIds);
+        private void add(InjurySyncResult result) {
+            switch (result.outcome()) {
+                case SYNCED -> syncedCount++;
+                case INVALID_PAYLOAD -> invalidPayloadCount++;
                 case FIXTURE_NOT_FOUND -> {
-                    fixtureIds.add(result.missingReferenceId());
-                    yield new InjurySyncSummary(syncedCount, invalidPayloadCount,
-                            missingFixtureCount + 1, missingTeamCount, missingPlayerCount,
-                            fixtureIds, teamIds, playerIds);
+                    missingFixtureCount++;
+                    missingFixtureIdSet.add(result.missingReferenceId());
                 }
                 case TEAM_NOT_FOUND -> {
-                    teamIds.add(result.missingReferenceId());
-                    yield new InjurySyncSummary(syncedCount, invalidPayloadCount,
-                            missingFixtureCount, missingTeamCount + 1, missingPlayerCount,
-                            fixtureIds, teamIds, playerIds);
+                    missingTeamCount++;
+                    missingTeamIdSet.add(result.missingReferenceId());
                 }
                 case PLAYER_NOT_FOUND -> {
-                    playerIds.add(result.missingReferenceId());
-                    yield new InjurySyncSummary(syncedCount, invalidPayloadCount,
-                            missingFixtureCount, missingTeamCount, missingPlayerCount + 1,
-                            fixtureIds, teamIds, playerIds);
+                    missingPlayerCount++;
+                    missingPlayerIdSet.add(result.missingReferenceId());
                 }
-            };
+            }
         }
 
-        private InjurySyncSummary plus(InjurySyncSummary other) {
-            Set<Long> fixtureIds = new LinkedHashSet<>(missingFixtureIdSet);
-            fixtureIds.addAll(other.missingFixtureIdSet);
-            Set<Long> teamIds = new LinkedHashSet<>(missingTeamIdSet);
-            teamIds.addAll(other.missingTeamIdSet);
-            Set<Long> playerIds = new LinkedHashSet<>(missingPlayerIdSet);
-            playerIds.addAll(other.missingPlayerIdSet);
-            return new InjurySyncSummary(
-                    syncedCount + other.syncedCount,
-                    invalidPayloadCount + other.invalidPayloadCount,
-                    missingFixtureCount + other.missingFixtureCount,
-                    missingTeamCount + other.missingTeamCount,
-                    missingPlayerCount + other.missingPlayerCount,
-                    fixtureIds,
-                    teamIds,
-                    playerIds
-            );
+        private void merge(InjurySyncSummary other) {
+            syncedCount += other.syncedCount;
+            invalidPayloadCount += other.invalidPayloadCount;
+            missingFixtureCount += other.missingFixtureCount;
+            missingTeamCount += other.missingTeamCount;
+            missingPlayerCount += other.missingPlayerCount;
+            missingFixtureIdSet.addAll(other.missingFixtureIdSet);
+            missingTeamIdSet.addAll(other.missingTeamIdSet);
+            missingPlayerIdSet.addAll(other.missingPlayerIdSet);
+        }
+
+        private int syncedCount() {
+            return syncedCount;
+        }
+
+        private int invalidPayloadCount() {
+            return invalidPayloadCount;
+        }
+
+        private int missingFixtureCount() {
+            return missingFixtureCount;
+        }
+
+        private int missingTeamCount() {
+            return missingTeamCount;
+        }
+
+        private int missingPlayerCount() {
+            return missingPlayerCount;
         }
 
         private int skippedCount() {
