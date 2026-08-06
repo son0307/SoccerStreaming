@@ -1,6 +1,8 @@
 package com.son.soccerStreaming.apifootball.runner;
 
 import com.son.soccerStreaming.apifootball.scheduler.ApiFootballSyncFailureRetryScheduler;
+import com.son.soccerStreaming.apifootball.scheduler.ApiFootballRetryBatchRequest;
+import com.son.soccerStreaming.apifootball.scheduler.ApiFootballRetryUnit;
 import com.son.soccerStreaming.apifootball.service.ApiFootballPlayerSyncService;
 import com.son.soccerStreaming.apifootball.service.ApiFootballRegisteredPlayerSyncException;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
@@ -12,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Slf4j
 @Component
@@ -48,19 +52,22 @@ public class ApiFootballRegisteredPlayerStartupSyncRunner implements CommandLine
     }
 
     private void scheduleRetry(String syncKey, Exception exception) {
-        if (!failureRetryScheduler.shouldRetry(exception)) {
-            return;
-        }
         if (exception instanceof ApiFootballRegisteredPlayerSyncException playerSyncException) {
-            for (Long teamId : playerSyncException.getFailedTeamIds()) {
-                failureRetryScheduler.schedule(
-                        "startup:registered-players:%s:%s:team:%s".formatted(league, season, teamId),
-                        syncKey,
-                        "startup registered player sync league=%s season=%s teamId=%s".formatted(league, season, teamId),
-                        exception,
-                        () -> apiFootballPlayerSyncService.syncRegisteredPlayersByTeamId(teamId, league, season, delayMs)
-                );
-            }
+            List<ApiFootballRetryUnit> units = playerSyncException.getFailedTeamIds().stream()
+                    .map(teamId -> new ApiFootballRetryUnit(
+                            "startup:registered-players:%s:%s:team:%s".formatted(league, season, teamId),
+                            "startup registered player sync league=%s season=%s teamId=%s"
+                                    .formatted(league, season, teamId),
+                            () -> apiFootballPlayerSyncService
+                                    .syncRegisteredPlayersByTeamId(teamId, league, season, delayMs)
+                    ))
+                    .toList();
+            failureRetryScheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                    syncKey,
+                    "startup registered player sync league=%s season=%s".formatted(league, season),
+                    exception,
+                    units
+            ));
             return;
         }
 

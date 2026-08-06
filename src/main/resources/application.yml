@@ -43,6 +43,12 @@ news:
     cron: ${NEWS_SYNC_CRON:0 0 6 * * *}
     zone: ${NEWS_SYNC_ZONE:Asia/Seoul}
     retention-days: ${NEWS_RETENTION_DAYS:90}
+    failure-retry:
+      enabled: ${NEWS_SYNC_FAILURE_RETRY_ENABLED:true}
+      max-attempts: ${NEWS_SYNC_FAILURE_RETRY_MAX_ATTEMPTS:2}
+      initial-delay: ${NEWS_SYNC_FAILURE_RETRY_INITIAL_DELAY:5m}
+      delay-multiplier: ${NEWS_SYNC_FAILURE_RETRY_DELAY_MULTIPLIER:3}
+      max-delay: ${NEWS_SYNC_FAILURE_RETRY_MAX_DELAY:30m}
 
 live:
   api-football:
@@ -154,4 +160,4 @@ api-football:
       run-on-startup: ${API_FOOTBALL_INJURIES_SYNC_RUN_ON_STARTUP:false}
       league: ${API_FOOTBALL_INJURIES_LEAGUE:39}
       season: ${API_FOOTBALL_INJURIES_SEASON:2025}
-      daily-cron: ${API_FOOTBALL_INJURIES_DAILY_CRON:0 0 5 * * *}
+      daily-cron: ${API_FOOTBALL_INJURIES_DAILY_CRON:0 45 5 * * *}

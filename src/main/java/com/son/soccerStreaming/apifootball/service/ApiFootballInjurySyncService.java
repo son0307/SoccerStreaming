@@ -52,21 +52,31 @@ public class ApiFootballInjurySyncService {
         List<List<ApiFootballInjuryDto.InjuryResponse>> chunks = chunks(injuries);
         int processedUnits = 0;
         int failedUnits = 0;
+        InjurySyncSummary summary = InjurySyncSummary.empty();
         progressReporter.beginPhase("SYNCING_INJURIES", injuries.size(), "injuries", 0);
         for (int i = 0; i < chunks.size(); i++) {
             progressReporter.checkCancelled();
             List<ApiFootballInjuryDto.InjuryResponse> chunk = chunks.get(i);
             log.debug("API-Football injury chunk started. chunk={}/{}, size={}", i + 1, chunks.size(), chunk.size());
             try {
-                int chunkSyncedCount = syncInjuryChunk(chunk);
-                syncedCount += chunkSyncedCount;
+                InjurySyncSummary chunkSummary = syncInjuryChunk(chunk);
+                summary = summary.plus(chunkSummary);
+                syncedCount += chunkSummary.syncedCount();
                 processedUnits += chunk.size();
-                int skippedCount = Math.max(0, chunk.size() - chunkSyncedCount);
+                int skippedCount = chunkSummary.skippedCount();
                 failedUnits += skippedCount;
                 if (skippedCount > 0) {
                     progressReporter.error("INJURY_CHUNK", String.valueOf(i + 1),
-                            "Some injuries were skipped because required fixture, team, or player data was missing. skippedCount="
-                                    + skippedCount);
+                            chunkSummary.failureMessage());
+                    log.atWarn()
+                            .addKeyValue("event.action", "api-football-injury-sync")
+                            .addKeyValue("event.outcome", "partial_failure")
+                            .addKeyValue("api_football.injury_chunk", i + 1)
+                            .addKeyValue("api_football.invalid_payload_count", chunkSummary.invalidPayloadCount())
+                            .addKeyValue("api_football.missing_fixture_count", chunkSummary.missingFixtureCount())
+                            .addKeyValue("api_football.missing_team_count", chunkSummary.missingTeamCount())
+                            .addKeyValue("api_football.missing_player_count", chunkSummary.missingPlayerCount())
+                            .log("Some injury records were skipped.");
                 }
                 progressReporter.update(processedUnits, processedUnits - failedUnits, failedUnits, syncedCount);
             } catch (SyncCancelledException exception) {
@@ -82,28 +92,38 @@ public class ApiFootballInjurySyncService {
         }
 
         progressReporter.checkCancelled();
+        if (summary.hasMissingReferences()) {
+            ApiFootballInjuryReferenceSyncException failure = new ApiFootballInjuryReferenceSyncException(
+                    summary.missingFixtureCount(),
+                    summary.missingTeamCount(),
+                    summary.missingPlayerCount()
+            );
+            apiFootballSyncStatusService.recordFailure("injuries", "Injuries", season, failure);
+            throw failure;
+        }
         log.info("API-Football injury sync completed. league={}, season={}, count={}", league, season, syncedCount);
         apiFootballSyncStatusService.recordSuccess("injuries", "Injuries", season);
         return syncedCount;
     }
 
-    private int syncInjuryChunk(List<ApiFootballInjuryDto.InjuryResponse> injuries) {
-        Integer count = transactionTemplate.execute(status -> {
-            int syncedCount = 0;
+    private InjurySyncSummary syncInjuryChunk(List<ApiFootballInjuryDto.InjuryResponse> injuries) {
+        InjurySyncSummary result = transactionTemplate.execute(status -> {
+            InjurySyncSummary summary = InjurySyncSummary.empty();
             for (ApiFootballInjuryDto.InjuryResponse injury : injuries) {
-                if (upsertInjury(injury)) {
-                    syncedCount++;
-                }
+                summary = summary.add(upsertInjury(injury));
             }
             // Clear each injury chunk so bulk admin sync does not keep every absence managed until completion.
             entityManager.flush();
             entityManager.clear();
-            return syncedCount;
+            return summary;
         });
-        return count != null ? count : 0;
+        return result != null ? result : InjurySyncSummary.empty();
     }
 
-    private boolean upsertInjury(ApiFootballInjuryDto.InjuryResponse injury) {
+    private InjurySyncOutcome upsertInjury(ApiFootballInjuryDto.InjuryResponse injury) {
+        if (injury == null) {
+            return InjurySyncOutcome.INVALID_PAYLOAD;
+        }
         ApiFootballInjuryDto.FixtureInfo fixtureInfo = injury.getFixture();
         ApiFootballInjuryDto.TeamInfo teamInfo = injury.getTeam();
         ApiFootballInjuryDto.PlayerInfo playerInfo = injury.getPlayer();
@@ -111,15 +131,20 @@ public class ApiFootballInjurySyncService {
         if (fixtureInfo == null || fixtureInfo.getId() == null
                 || teamInfo == null || teamInfo.getId() == null
                 || playerInfo == null || playerInfo.getId() == null) {
-            return false;
+            return InjurySyncOutcome.INVALID_PAYLOAD;
         }
 
         Optional<Fixture> fixture = fixtureRepository.findByFixtureId(fixtureInfo.getId());
         Optional<Team> team = teamRepository.findByTeamId(teamInfo.getId());
-        if (fixture.isEmpty() || team.isEmpty()) {
-            log.warn("Skip injury sync because fixture or team does not exist. fixtureId={}, teamId={}",
+        if (fixture.isEmpty()) {
+            log.warn("Skip injury sync because fixture does not exist. fixtureId={}, teamId={}",
                     fixtureInfo.getId(), teamInfo.getId());
-            return false;
+            return InjurySyncOutcome.FIXTURE_NOT_FOUND;
+        }
+        if (team.isEmpty()) {
+            log.warn("Skip injury sync because team does not exist. fixtureId={}, teamId={}",
+                    fixtureInfo.getId(), teamInfo.getId());
+            return InjurySyncOutcome.TEAM_NOT_FOUND;
         }
 
         Optional<Player> player = apiFootballPlayerSyncService.findOrFetchPlayer(
@@ -133,7 +158,7 @@ public class ApiFootballInjurySyncService {
         if (player.isEmpty()) {
             log.warn("Skip injury sync because player does not exist. fixtureId={}, playerId={}",
                     fixtureInfo.getId(), playerInfo.getId());
-            return false;
+            return InjurySyncOutcome.PLAYER_NOT_FOUND;
         }
 
         PlayerAbsence absence = playerAbsenceRepository
@@ -149,7 +174,7 @@ public class ApiFootballInjurySyncService {
                 valueOrDefault(playerInfo.getReason(), DEFAULT_REASON)
         );
         playerAbsenceRepository.save(absence);
-        return true;
+        return InjurySyncOutcome.SYNCED;
     }
 
     private String valueOrDefault(String value, String defaultValue) {
@@ -162,5 +187,70 @@ public class ApiFootballInjurySyncService {
             chunks.add(injuries.subList(i, Math.min(i + CHUNK_SIZE, injuries.size())));
         }
         return chunks;
+    }
+
+    private enum InjurySyncOutcome {
+        SYNCED,
+        INVALID_PAYLOAD,
+        FIXTURE_NOT_FOUND,
+        TEAM_NOT_FOUND,
+        PLAYER_NOT_FOUND
+    }
+
+    private record InjurySyncSummary(
+            int syncedCount,
+            int invalidPayloadCount,
+            int missingFixtureCount,
+            int missingTeamCount,
+            int missingPlayerCount
+    ) {
+        private static InjurySyncSummary empty() {
+            return new InjurySyncSummary(0, 0, 0, 0, 0);
+        }
+
+        private InjurySyncSummary add(InjurySyncOutcome outcome) {
+            return switch (outcome) {
+                case SYNCED -> new InjurySyncSummary(
+                        syncedCount + 1, invalidPayloadCount,
+                        missingFixtureCount, missingTeamCount, missingPlayerCount);
+                case INVALID_PAYLOAD -> new InjurySyncSummary(
+                        syncedCount, invalidPayloadCount + 1,
+                        missingFixtureCount, missingTeamCount, missingPlayerCount);
+                case FIXTURE_NOT_FOUND -> new InjurySyncSummary(
+                        syncedCount, invalidPayloadCount,
+                        missingFixtureCount + 1, missingTeamCount, missingPlayerCount);
+                case TEAM_NOT_FOUND -> new InjurySyncSummary(
+                        syncedCount, invalidPayloadCount,
+                        missingFixtureCount, missingTeamCount + 1, missingPlayerCount);
+                case PLAYER_NOT_FOUND -> new InjurySyncSummary(
+                        syncedCount, invalidPayloadCount,
+                        missingFixtureCount, missingTeamCount, missingPlayerCount + 1);
+            };
+        }
+
+        private InjurySyncSummary plus(InjurySyncSummary other) {
+            return new InjurySyncSummary(
+                    syncedCount + other.syncedCount,
+                    invalidPayloadCount + other.invalidPayloadCount,
+                    missingFixtureCount + other.missingFixtureCount,
+                    missingTeamCount + other.missingTeamCount,
+                    missingPlayerCount + other.missingPlayerCount
+            );
+        }
+
+        private int skippedCount() {
+            return invalidPayloadCount + missingFixtureCount + missingTeamCount + missingPlayerCount;
+        }
+
+        private boolean hasMissingReferences() {
+            return missingFixtureCount > 0 || missingTeamCount > 0 || missingPlayerCount > 0;
+        }
+
+        private String failureMessage() {
+            return "Some injuries were skipped. invalidPayloadCount=" + invalidPayloadCount
+                    + "; missingFixtureCount=" + missingFixtureCount
+                    + "; missingTeamCount=" + missingTeamCount
+                    + "; missingPlayerCount=" + missingPlayerCount;
+        }
     }
 }

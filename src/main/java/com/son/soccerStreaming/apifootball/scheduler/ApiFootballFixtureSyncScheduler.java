@@ -63,7 +63,6 @@ public class ApiFootballFixtureSyncScheduler {
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football live fixture sync failed.", e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "fixtures:live:%s:%s".formatted(league, season),
                     syncKey,
@@ -89,7 +88,6 @@ public class ApiFootballFixtureSyncScheduler {
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football season fixture sync failed. reason={}, league={}, season={}", reason, league, season, e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "fixtures:%s:%s:%s".formatted(reason, league, season),
                     syncKey,

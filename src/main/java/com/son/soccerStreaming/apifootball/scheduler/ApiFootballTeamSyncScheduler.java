@@ -40,7 +40,6 @@ public class ApiFootballTeamSyncScheduler {
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football team sync failed. league={}, season={}", league, season, e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "teams:%s:%s".formatted(league, season),
                     syncKey,

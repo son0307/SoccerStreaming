@@ -55,7 +55,6 @@ public class ApiFootballStandingSyncScheduler {
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football standing sync failed. reason={}, league={}, season={}", reason, league, season, e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "standings:%s:%s:%s".formatted(reason, league, season),
                     syncKey,

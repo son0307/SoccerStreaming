@@ -25,7 +25,7 @@ public class ApiFootballInjurySyncScheduler {
     @Value("${api-football.sync.injuries.season:2025}")
     private Integer season;
 
-    @Scheduled(cron = "${api-football.sync.injuries.daily-cron:0 0 5 * * *}")
+    @Scheduled(cron = "${api-football.sync.injuries.daily-cron:0 45 5 * * *}")
     public void syncInjuriesDaily() {
         String syncKey = ApiFootballSyncExecutionGuard.key(
                 "injuries", "league=%s; season=%s".formatted(league, season));
@@ -40,7 +40,6 @@ public class ApiFootballInjurySyncScheduler {
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football injury sync failed. league={}, season={}", league, season, e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "injuries:%s:%s".formatted(league, season),
                     syncKey,

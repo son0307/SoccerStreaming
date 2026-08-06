@@ -57,17 +57,31 @@ $env:SPRING_PROFILES_ACTIVE="prod"
 
 ## 2. Elasticsearch, Logstash, Kibana 실행
 
+로컬 설정 파일을 만든 뒤 `LOG_HOST_PATH`를 실제 로그 디렉터리의 절대 경로로 수정한다.
+
+```powershell
+Copy-Item deploy/observability/.env.example deploy/observability/.env
+```
+
+`.env`는 Git에서 제외되어 있다. 운영 환경에서는 배포 환경 변수로 같은 로그 경로를 주입한다.
+
 다른 터미널에서 다음 명령을 실행한다.
 
 ```powershell
-docker compose -f deploy/observability/compose.yml up -d
-docker compose -f deploy/observability/compose.yml ps
+docker compose `
+  --env-file deploy/observability/.env `
+  -f deploy/observability/compose.yml up -d
+docker compose `
+  --env-file deploy/observability/.env `
+  -f deploy/observability/compose.yml ps
 ```
 
 Logstash 컨테이너가 로그 파일을 읽을 수 있는지 확인한다.
 
 ```powershell
-docker compose -f deploy/observability/compose.yml exec logstash `
+docker compose `
+  --env-file deploy/observability/.env `
+  -f deploy/observability/compose.yml exec logstash `
   test -r /var/log/match-vault/application.json
 ```
 
@@ -94,11 +108,33 @@ Invoke-RestMethod -Method Post `
   -Body $body
 ```
 
+API-Football 실행 단위 집계 로그에 필요한 핵심 필드와 실제 Batch 완료 문서를
+한 번에 확인하려면 다음 검증 스크립트를 실행한다.
+
+```powershell
+deploy/observability/verify-structured-fields.ps1
+```
+
+다음 필드를 모두 확인하고 `API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED` 이벤트가
+실제로 색인된 경우에만 성공한다.
+
+- `event.code`
+- `event.outcome`
+- `external_api.provider`
+- `api_football.retry_batch_id`
+- `api_football.retry_total_units`
+- `api_football.retry_failed_units`
+
+필드 누락으로 종료되면 아직 해당 종류의 로그가 Elasticsearch에 들어오지 않은
+상태다. API-Football 재시도 Batch가 완료되는 흐름을 한 번 실행한 뒤 다시 검증한다.
+
 Logstash 자체 상태나 오류는 다음 명령으로 확인한다.
 
 ```powershell
 Invoke-RestMethod http://localhost:9600/_node/stats/pipelines
-docker compose -f deploy/observability/compose.yml logs logstash
+docker compose `
+  --env-file deploy/observability/.env `
+  -f deploy/observability/compose.yml logs logstash
 ```
 
 ## 4. Kibana에서 로그 확인
@@ -119,5 +155,7 @@ docker compose -f deploy/observability/compose.yml logs logstash
 데이터 볼륨을 유지하면서 컨테이너만 종료한다.
 
 ```powershell
-docker compose -f deploy/observability/compose.yml down
+docker compose `
+  --env-file deploy/observability/.env `
+  -f deploy/observability/compose.yml down
 ```

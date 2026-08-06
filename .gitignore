@@ -46,3 +46,4 @@ src/main/generated
 /src/main/test/
 /docs/
 /logs
+/deploy/observability/.env

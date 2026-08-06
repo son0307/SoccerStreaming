@@ -1,13 +1,18 @@
 package com.son.soccerStreaming.apifootball.scheduler;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncStatusService;
 import com.son.soccerStreaming.global.externalapi.ExternalApiErrorCategory;
 import com.son.soccerStreaming.global.externalapi.ExternalApiException;
 import com.son.soccerStreaming.global.externalapi.ExternalApiProvider;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
@@ -33,6 +38,8 @@ class ApiFootballSyncFailureRetrySchedulerTest {
     private final ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
     private final ApiFootballSyncFailureRetryScheduler scheduler =
             new ApiFootballSyncFailureRetryScheduler(syncStatusService, executionGuard, executor);
+    private Logger schedulerLogger;
+    private ListAppender<ILoggingEvent> logAppender;
 
     ApiFootballSyncFailureRetrySchedulerTest() {
         ReflectionTestUtils.setField(scheduler, "enabled", true);
@@ -44,8 +51,18 @@ class ApiFootballSyncFailureRetrySchedulerTest {
                 .thenAnswer(invocation -> mock(ScheduledFuture.class));
     }
 
+    @BeforeEach
+    void attachLogAppender() {
+        schedulerLogger = (Logger) LoggerFactory.getLogger(ApiFootballSyncFailureRetryScheduler.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        schedulerLogger.addAppender(logAppender);
+    }
+
     @AfterEach
     void tearDown() {
+        schedulerLogger.detachAppender(logAppender);
+        logAppender.stop();
         scheduler.shutdown();
     }
 
@@ -196,6 +213,139 @@ class ApiFootballSyncFailureRetrySchedulerTest {
         verify(executor, times(2)).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
         verify(syncStatusService, times(1)).recordRetryPendingByKey(any(), any(), any());
         executionGuard.release(lease);
+    }
+
+    @Test
+    void logsStructuredEventWhenRetryStopsForANonRetryableFailure() {
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        scheduler.schedule("registered-players:39:2025:team:1", "players:league=39; season=2025",
+                "player team retry", new RuntimeException(), () -> {
+                    throw nonRetryableFailure();
+                });
+        verify(executor).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
+        taskCaptor.getValue().run();
+
+        ILoggingEvent event = eventWithCode("API_FOOTBALL_SYNC_RETRY_NON_RETRYABLE");
+        assertThat(keyValue(event, "event.action")).isEqualTo("api-football-sync-retry");
+        assertThat(keyValue(event, "event.outcome")).isEqualTo("failure");
+        assertThat(keyValue(event, "external_api.provider")).isEqualTo("API_FOOTBALL");
+        assertThat(keyValue(event, "external_api.error_category")).isEqualTo("BAD_REQUEST");
+        assertThat(keyValue(event, "external_api.retryable")).isEqualTo(false);
+        assertThat(keyValue(event, "api_football.retry_key"))
+                .isEqualTo("registered-players:39:2025:team:1");
+        assertThat(keyValue(event, "api_football.retry_attempt")).isEqualTo(1);
+        assertThat(event.getThrowableProxy()).isNotNull();
+    }
+
+    @Test
+    void logsStructuredEventWhenRetryAttemptsAreExhausted() {
+        ReflectionTestUtils.setField(scheduler, "maxAttempts", 1);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        scheduler.schedule("fixtures:daily:39:2025", "fixtures:league=39; season=2025",
+                "fixture retry", new RuntimeException(), () -> {
+                    throw retryableFailure(null);
+                });
+        verify(executor).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
+        taskCaptor.getValue().run();
+
+        ILoggingEvent event = eventWithCode("API_FOOTBALL_SYNC_RETRY_EXHAUSTED");
+        assertThat(keyValue(event, "event.action")).isEqualTo("api-football-sync-retry");
+        assertThat(keyValue(event, "event.outcome")).isEqualTo("failure");
+        assertThat(keyValue(event, "external_api.provider")).isEqualTo("API_FOOTBALL");
+        assertThat(keyValue(event, "external_api.error_category")).isEqualTo("RATE_LIMITED");
+        assertThat(keyValue(event, "external_api.retryable")).isEqualTo(true);
+        assertThat(keyValue(event, "api_football.retry_attempt")).isEqualTo(1);
+        assertThat(keyValue(event, "api_football.retry_max_attempts")).isEqualTo(1);
+        assertThat(event.getThrowableProxy()).isNotNull();
+    }
+
+    @Test
+    void emitsOnePartialFailureEventAfterEveryUnitInTheBatchFinishes() {
+        ReflectionTestUtils.setField(scheduler, "maxAttempts", 1);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        scheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                "players:league=39; season=2025",
+                "registered player retry batch",
+                new RuntimeException("initial partial failure"),
+                List.of(
+                        new ApiFootballRetryUnit(
+                                "registered-players:39:2025:team:1",
+                                "team 1",
+                                () -> { }
+                        ),
+                        new ApiFootballRetryUnit(
+                                "registered-players:39:2025:team:2",
+                                "team 2",
+                                () -> {
+                                    throw retryableFailure(null);
+                                }
+                        )
+                )
+        ));
+        verify(executor, times(2)).schedule(taskCaptor.capture(), anyLong(), eq(TimeUnit.MILLISECONDS));
+
+        taskCaptor.getAllValues().get(0).run();
+        assertThat(eventsWithCode("API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED")).isEmpty();
+
+        taskCaptor.getAllValues().get(1).run();
+        List<ILoggingEvent> completedEvents = eventsWithCode("API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED");
+
+        assertThat(completedEvents).hasSize(1);
+        ILoggingEvent event = completedEvents.get(0);
+        assertThat(keyValue(event, "event.outcome")).isEqualTo("partial_failure");
+        assertThat(keyValue(event, "api_football.retry_scope")).isEqualTo("PARTIAL_UNITS");
+        assertThat(keyValue(event, "api_football.retry_total_units")).isEqualTo(2);
+        assertThat(keyValue(event, "api_football.retry_succeeded_units")).isEqualTo(1);
+        assertThat(keyValue(event, "api_football.retry_failed_units")).isEqualTo(1);
+        assertThat(keyValue(event, "api_football.failed_retry_keys"))
+                .isEqualTo("registered-players:39:2025:team:2");
+        assertThat(keyValue(event, "api_football.retry_batch_id")).isNotNull();
+        verify(syncStatusService).recordFailureByKey(eq("players:2025"), eq("Players 2025"), any());
+    }
+
+    @Test
+    void completesANonRetryableInitialFailureWithoutSchedulingAUnit() {
+        scheduler.schedule(
+                "injuries:39:2025",
+                "injuries:league=39; season=2025",
+                "injury retry",
+                nonRetryableFailure(),
+                () -> { }
+        );
+
+        verify(executor, never()).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        ILoggingEvent unitEvent = eventWithCode("API_FOOTBALL_SYNC_RETRY_NON_RETRYABLE");
+        ILoggingEvent batchEvent = eventWithCode("API_FOOTBALL_SYNC_RETRY_BATCH_COMPLETED");
+        assertThat(keyValue(unitEvent, "api_football.retry_attempt")).isEqualTo(0);
+        assertThat(keyValue(batchEvent, "event.outcome")).isEqualTo("failure");
+        assertThat(keyValue(batchEvent, "api_football.retry_total_units")).isEqualTo(1);
+        assertThat(keyValue(batchEvent, "api_football.retry_failed_units")).isEqualTo(1);
+    }
+
+    private ILoggingEvent eventWithCode(String eventCode) {
+        return eventsWithCode(eventCode).stream()
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private List<ILoggingEvent> eventsWithCode(String eventCode) {
+        return logAppender.list.stream()
+                .filter(event -> eventCode.equals(keyValue(event, "event.code")))
+                .toList();
+    }
+
+    private Object keyValue(ILoggingEvent event, String key) {
+        if (event.getKeyValuePairs() == null) {
+            return null;
+        }
+        return event.getKeyValuePairs().stream()
+                .filter(pair -> pair.key.equals(key))
+                .map(pair -> pair.value)
+                .findFirst()
+                .orElse(null);
     }
 
     private ExternalApiException retryableFailure(Duration retryAfter) {

@@ -33,7 +33,6 @@ public class LeagueSeasonCoverageStartupSyncRunner implements CommandLineRunner 
             failureRetryScheduler.cancelPendingByExecutionKey(syncKey);
         } catch (Exception e) {
             log.error("API-Football startup league season coverage sync failed. league={}", league, e);
-            if (!failureRetryScheduler.shouldRetry(e)) return;
             failureRetryScheduler.schedule(
                     "startup:league-seasons:%s".formatted(league),
                     syncKey,

@@ -82,21 +82,27 @@ public class ApiFootballFixtureDetailSyncScheduler {
 
     private void scheduleFixtureDetailRetry(String syncKey, String reason,
                                             boolean applyLiveStandingImpact, Exception exception) {
-        if (!failureRetryScheduler.shouldRetry(exception)) {
-            return;
-        }
         if (exception instanceof ApiFootballFixtureDetailSyncException fixtureDetailException) {
-            int index = 1;
-            for (java.util.List<Long> chunk : fixtureDetailException.getFailedChunks()) {
-                String fixtureIds = chunk.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining("-"));
-                failureRetryScheduler.schedule(
-                        "fixture-details:%s:chunk:%s".formatted(reason, fixtureIds),
-                        syncKey,
-                        "fixture detail sync reason=%s chunk=%s".formatted(reason, index++),
-                        exception,
-                        () -> apiFootballFixtureDetailSyncService.syncFixtureDetailsByIds(chunk, applyLiveStandingImpact)
-                );
-            }
+            java.util.concurrent.atomic.AtomicInteger index = new java.util.concurrent.atomic.AtomicInteger(1);
+            List<ApiFootballRetryUnit> units = fixtureDetailException.getFailedChunks().stream()
+                    .map(chunk -> {
+                        String fixtureIds = chunk.stream()
+                                .map(String::valueOf)
+                                .collect(java.util.stream.Collectors.joining("-"));
+                        return new ApiFootballRetryUnit(
+                                "fixture-details:%s:chunk:%s".formatted(reason, fixtureIds),
+                                "fixture detail sync reason=%s chunk=%s".formatted(reason, index.getAndIncrement()),
+                                () -> apiFootballFixtureDetailSyncService
+                                        .syncFixtureDetailsByIds(chunk, applyLiveStandingImpact)
+                        );
+                    })
+                    .toList();
+            failureRetryScheduler.scheduleBatch(ApiFootballRetryBatchRequest.partialUnits(
+                    syncKey,
+                    "fixture detail sync reason=%s".formatted(reason),
+                    exception,
+                    units
+            ));
             return;
         }
 
