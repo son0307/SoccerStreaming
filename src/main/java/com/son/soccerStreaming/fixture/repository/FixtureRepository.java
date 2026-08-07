@@ -3,8 +3,11 @@ package com.son.soccerStreaming.fixture.repository;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -13,6 +16,10 @@ import java.util.Optional;
 
 public interface FixtureRepository extends JpaRepository<Fixture, Long>, FixtureRepositoryCustom {
     Optional<Fixture> findByFixtureId(Long fixtureId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT f FROM Fixture f WHERE f.fixtureId = :fixtureId")
+    Optional<Fixture> findByFixtureIdForEventUpdate(@Param("fixtureId") Long fixtureId);
 
     @Query("SELECT f FROM Fixture f JOIN FETCH f.homeTeam JOIN FETCH f.awayTeam WHERE f.fixtureId = :fixtureId")
     Optional<Fixture> findWithTeamsByFixtureId(@Param("fixtureId") Long fixtureId);

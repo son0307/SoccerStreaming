@@ -16,6 +16,12 @@ public interface AdminFieldOverrideRepository extends JpaRepository<AdminFieldOv
             String fieldName
     );
 
+    boolean existsByTargetTypeAndTargetIdAndFieldName(
+            AdminOverrideTargetType targetType,
+            Long targetId,
+            String fieldName
+    );
+
     List<AdminFieldOverride> findAllByTargetTypeAndTargetIdAndFieldNameIn(
             AdminOverrideTargetType targetType,
             Long targetId,

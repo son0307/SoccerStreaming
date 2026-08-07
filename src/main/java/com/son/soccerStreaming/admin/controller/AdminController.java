@@ -75,18 +75,20 @@ public class AdminController {
     @DeleteMapping("/teams/{teamId}/overrides")
     public ResponseEntity<AdminDto.TeamAdminResponse> clearTeamOverrides(
             @AuthenticationPrincipal AuthUserDetails userDetails,
-            @PathVariable Long teamId
+            @PathVariable Long teamId,
+            @RequestParam Long version
     ) {
-        return ResponseEntity.ok(adminService.clearTeamOverrides(userDetails.getId(), teamId));
+        return ResponseEntity.ok(adminService.clearTeamOverrides(userDetails.getId(), teamId, version));
     }
 
     @DeleteMapping("/teams/{teamId}/overrides/{fieldName}")
     public ResponseEntity<AdminDto.TeamAdminResponse> clearTeamOverride(
             @AuthenticationPrincipal AuthUserDetails userDetails,
             @PathVariable Long teamId,
-            @PathVariable String fieldName
+            @PathVariable String fieldName,
+            @RequestParam Long version
     ) {
-        return ResponseEntity.ok(adminService.clearTeamOverride(userDetails.getId(), teamId, fieldName));
+        return ResponseEntity.ok(adminService.clearTeamOverride(userDetails.getId(), teamId, fieldName, version));
     }
 
     @GetMapping("/players")
@@ -128,6 +130,25 @@ public class AdminController {
         return ResponseEntity.ok(adminService.updateFixture(userDetails.getId(), fixtureId, request));
     }
 
+    @DeleteMapping("/fixtures/{fixtureId}/overrides")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureOverrides(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureOverrides(userDetails.getId(), fixtureId, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/overrides/{fieldName}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureOverride(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable String fieldName,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureOverride(userDetails.getId(), fixtureId, fieldName, version));
+    }
+
     @PutMapping("/fixtures/{fixtureId}/events/{eventSequence}")
     public ResponseEntity<AdminDto.FixtureAdminDetailResponse> updateFixtureEvent(
             @AuthenticationPrincipal AuthUserDetails userDetails,
@@ -147,6 +168,37 @@ public class AdminController {
         return ResponseEntity.ok(adminService.createFixtureEvent(userDetails.getId(), fixtureId, request));
     }
 
+    @DeleteMapping("/fixtures/{fixtureId}/events/{eventSequence}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> deleteFixtureEvent(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Integer eventSequence,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.deleteFixtureEvent(
+                userDetails.getId(), fixtureId, eventSequence, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/events/overrides")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureEventOverrides(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureEventOverrides(userDetails.getId(), fixtureId, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/events/overrides/{fieldName}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureEventOverride(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable String fieldName,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureEventOverride(
+                userDetails.getId(), fixtureId, fieldName, version));
+    }
+
     @PutMapping("/fixtures/{fixtureId}/lineups/{teamId}/{playerId}")
     public ResponseEntity<AdminDto.FixtureAdminDetailResponse> updateFixtureLineup(
             @AuthenticationPrincipal AuthUserDetails userDetails,
@@ -156,6 +208,31 @@ public class AdminController {
             @RequestBody AdminDto.FixtureLineupUpdateRequest request
     ) {
         return ResponseEntity.ok(adminService.updateFixtureLineup(userDetails.getId(), fixtureId, teamId, playerId, request));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/lineups/{teamId}/{playerId}/overrides")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureLineupOverrides(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long teamId,
+            @PathVariable Long playerId,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureLineupOverrides(
+                userDetails.getId(), fixtureId, teamId, playerId, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/lineups/{teamId}/{playerId}/overrides/{fieldName}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureLineupOverride(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long teamId,
+            @PathVariable Long playerId,
+            @PathVariable String fieldName,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureLineupOverride(
+                userDetails.getId(), fixtureId, teamId, playerId, fieldName, version));
     }
 
     @PutMapping("/fixtures/{fixtureId}/team-stats/{teamId}")
@@ -168,6 +245,29 @@ public class AdminController {
         return ResponseEntity.ok(adminService.updateFixtureTeamStat(userDetails.getId(), fixtureId, teamId, request));
     }
 
+    @DeleteMapping("/fixtures/{fixtureId}/team-stats/{teamId}/overrides")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureTeamStatOverrides(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long teamId,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureTeamStatOverrides(
+                userDetails.getId(), fixtureId, teamId, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/team-stats/{teamId}/overrides/{fieldName}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixtureTeamStatOverride(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long teamId,
+            @PathVariable String fieldName,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixtureTeamStatOverride(
+                userDetails.getId(), fixtureId, teamId, fieldName, version));
+    }
+
     @PutMapping("/fixtures/{fixtureId}/player-stats/{playerId}")
     public ResponseEntity<AdminDto.FixtureAdminDetailResponse> updateFixturePlayerStat(
             @AuthenticationPrincipal AuthUserDetails userDetails,
@@ -176,6 +276,29 @@ public class AdminController {
             @RequestBody AdminDto.FixturePlayerStatUpdateRequest request
     ) {
         return ResponseEntity.ok(adminService.updateFixturePlayerStat(userDetails.getId(), fixtureId, playerId, request));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/player-stats/{playerId}/overrides")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixturePlayerStatOverrides(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long playerId,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixturePlayerStatOverrides(
+                userDetails.getId(), fixtureId, playerId, version));
+    }
+
+    @DeleteMapping("/fixtures/{fixtureId}/player-stats/{playerId}/overrides/{fieldName}")
+    public ResponseEntity<AdminDto.FixtureAdminDetailResponse> clearFixturePlayerStatOverride(
+            @AuthenticationPrincipal AuthUserDetails userDetails,
+            @PathVariable Long fixtureId,
+            @PathVariable Long playerId,
+            @PathVariable String fieldName,
+            @RequestParam Long version
+    ) {
+        return ResponseEntity.ok(adminService.clearFixturePlayerStatOverride(
+                userDetails.getId(), fixtureId, playerId, fieldName, version));
     }
 
     @PutMapping("/players/{playerId}")
@@ -190,18 +313,20 @@ public class AdminController {
     @DeleteMapping("/players/{playerId}/overrides")
     public ResponseEntity<AdminDto.PlayerAdminResponse> clearPlayerOverrides(
             @AuthenticationPrincipal AuthUserDetails userDetails,
-            @PathVariable Long playerId
+            @PathVariable Long playerId,
+            @RequestParam Long version
     ) {
-        return ResponseEntity.ok(adminService.clearPlayerOverrides(userDetails.getId(), playerId));
+        return ResponseEntity.ok(adminService.clearPlayerOverrides(userDetails.getId(), playerId, version));
     }
 
     @DeleteMapping("/players/{playerId}/overrides/{fieldName}")
     public ResponseEntity<AdminDto.PlayerAdminResponse> clearPlayerOverride(
             @AuthenticationPrincipal AuthUserDetails userDetails,
             @PathVariable Long playerId,
-            @PathVariable String fieldName
+            @PathVariable String fieldName,
+            @RequestParam Long version
     ) {
-        return ResponseEntity.ok(adminService.clearPlayerOverride(userDetails.getId(), playerId, fieldName));
+        return ResponseEntity.ok(adminService.clearPlayerOverride(userDetails.getId(), playerId, fieldName, version));
     }
 
     @PostMapping("/sync/teams")

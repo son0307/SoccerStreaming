@@ -75,6 +75,7 @@ type AdminOverride = {
 
 type TeamAdmin = Record<string, unknown> & {
   teamId: number;
+  version: number;
   name: string | null;
   koreanName: string | null;
   logoDisplayUrl: string | null;
@@ -93,6 +94,7 @@ type TeamSelectionState = {
 
 type PlayerAdmin = Record<string, unknown> & {
   playerId: number;
+  version: number;
   name: string | null;
   koreanName: string | null;
   photoDisplayUrl: string | null;
@@ -120,6 +122,7 @@ type FixtureSummaryAdmin = {
 
 type FixtureDetailAdmin = {
   fixture: FixtureAdmin;
+  eventOverrides?: AdminOverride[];
   events: FixtureEventAdmin[];
   lineups: FixtureLineupAdmin[];
   teamStats: FixtureTeamStatAdmin[];
@@ -142,10 +145,14 @@ type FixtureTeamOption = {
 
 type FixtureAdmin = Record<string, unknown> & {
   fixtureId: number;
+  version: number;
+  fixtureStatus: string | null;
+  statusShort: string | null;
   homeTeamId: number | null;
   homeTeamName: string | null;
   awayTeamId: number | null;
   awayTeamName: string | null;
+  manualOverrides?: AdminOverride[];
 };
 
 type FixtureEventAdmin = Record<string, unknown> & {
@@ -157,26 +164,33 @@ type FixtureEventAdmin = Record<string, unknown> & {
 };
 
 type FixtureLineupAdmin = Record<string, unknown> & {
+  lineupId: number;
+  version: number;
   teamId: number;
   teamName: string | null;
   teamNameKo: string | null;
   playerId: number;
   playerName: string | null;
   playerNameKo: string | null;
+  manualOverrides?: AdminOverride[];
 };
 
 type FixtureTeamStatAdmin = Record<string, unknown> & {
   teamId: number;
+  version: number;
   teamName: string | null;
+  manualOverrides?: AdminOverride[];
 };
 
 type FixturePlayerStatAdmin = Record<string, unknown> & {
   playerId: number;
+  version: number;
   teamId: number;
   playerName: string | null;
   playerNameKo: string | null;
   teamName: string | null;
   teamNameKo: string | null;
+  manualOverrides?: AdminOverride[];
 };
 
 type AuditLog = {
@@ -383,6 +397,10 @@ const eventFields: FieldConfig[] = [
   { name: "comments", label: "설명" },
 ];
 
+const eventOverrideFields: FieldConfig[] = [
+  { name: "events", label: "경기 이벤트 전체" },
+];
+
 const eventTypeOptions: FieldOption[] = [
   { value: "Goal", label: "득점" },
   { value: "Card", label: "카드" },
@@ -412,6 +430,7 @@ const eventDetailOptionsByType: Record<string, FieldOption[]> = {
 };
 
 const lineupFields: FieldConfig[] = [
+  { name: "jerseyNumber", label: "등번호", kind: "number", min: 0, max: 99 },
   { name: "position", label: "포지션" },
   { name: "grid", label: "배치 위치" },
   { name: "starter", label: "선발 여부", kind: "boolean" },
@@ -528,7 +547,6 @@ export function AdminPage({ authState }: AdminPageProps) {
   const [auditPage, setAuditPage] = useState(0);
   const [auditTotalPages, setAuditTotalPages] = useState(0);
   const [auditTotalElements, setAuditTotalElements] = useState(0);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [mediaToast, setMediaToast] = useState<AdminMediaToast | null>(null);
   const teamRequestIdRef = useRef(0);
@@ -746,7 +764,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     teamRequestIdRef.current = requestId;
     setTeamSelection({ teamId, status: "loading", detail: null });
     setError("");
-    setMessage("");
     try {
       const detail = await adminGet<TeamAdmin>(`/api/v1/admin/teams/${teamId}`);
       if (teamRequestIdRef.current === requestId && detail.teamId === teamId) {
@@ -776,7 +793,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     playerRequestIdRef.current = requestId;
     setPlayerSelection({ playerId, status: "loading", detail: null });
     setError("");
-    setMessage("");
     try {
       const detail = await adminGet<PlayerAdmin>(`/api/v1/admin/players/${playerId}`);
       if (playerRequestIdRef.current === requestId && detail.playerId === playerId) {
@@ -833,7 +849,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     setTeamPlayerStatus("loading");
     setPlayerSelection({ playerId: null, status: "idle", detail: null });
     setError("");
-    setMessage("");
     try {
       const result = await fetchTeamPlayers(teamId, authState.season);
       if (teamPlayerRequestIdRef.current === requestId) {
@@ -860,7 +875,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     setFixtureListStatus("loading");
     setFixtureSelection({ fixtureId: null, status: "idle", detail: null });
     setError("");
-    setMessage("");
     try {
       const response = await fetchFixtures({ season: authState.season, teamId, size: 100 });
       if (fixtureListRequestIdRef.current === requestId) {
@@ -883,7 +897,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     fixtureRequestIdRef.current = requestId;
     setFixtureSelection({ fixtureId, status: "loading", detail: null });
     setError("");
-    setMessage("");
     try {
       const detail = await adminGet<FixtureDetailAdmin>(`/api/v1/admin/fixtures/${fixtureId}`);
       if (fixtureRequestIdRef.current === requestId && detail.fixture.fixtureId === fixtureId) {
@@ -995,6 +1008,7 @@ export function AdminPage({ authState }: AdminPageProps) {
     const teamId = selectedTeam.teamId;
     const body = {
       ...formBody(event.currentTarget, teamFields),
+      version: selectedTeam.version,
       venueId: selectedTeam.venueId,
     };
     await runToastSave(`team:${teamId}`, async () => {
@@ -1011,13 +1025,98 @@ export function AdminPage({ authState }: AdminPageProps) {
       return;
     }
     const playerId = selectedPlayer.playerId;
-    const body = formBody(event.currentTarget, playerFields);
+    const body = {
+      ...formBody(event.currentTarget, playerFields),
+      version: selectedPlayer.version,
+    };
     await runToastSave(`player:${playerId}`, async () => {
       const updated = await adminJson<PlayerAdmin>(`/api/v1/admin/players/${playerId}`, "PUT", body);
       clearApiMemoryCache();
       setPlayerSelection({ playerId, status: "ready", detail: updated });
       await reloadAuditLogs();
     }, "선수 정보를 수정했습니다.", "선수 정보를 수정하지 못했습니다.");
+  }
+
+  async function clearTeamOverrides() {
+    if (!selectedTeam || savingKey !== null) {
+      return;
+    }
+    if (!window.confirm("팀의 관리자 수정 상태를 모두 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.")) {
+      return;
+    }
+    const teamId = selectedTeam.teamId;
+    const version = selectedTeam.version;
+    await runToastSave(`team-overrides:${teamId}`, async () => {
+      const updated = await adminJson<TeamAdmin>(
+        `/api/v1/admin/teams/${teamId}/overrides?version=${version}`,
+        "DELETE",
+      );
+      clearApiMemoryCache();
+      setTeamSelection({ teamId, status: "ready", detail: updated });
+      await reloadAuditLogs();
+    }, "팀의 관리자 수정 상태를 초기화했습니다.", "팀의 관리자 수정 상태를 초기화하지 못했습니다.");
+  }
+
+  async function clearPlayerOverrides() {
+    if (!selectedPlayer || savingKey !== null) {
+      return;
+    }
+    if (!window.confirm("선수의 관리자 수정 상태를 모두 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.")) {
+      return;
+    }
+    const playerId = selectedPlayer.playerId;
+    const version = selectedPlayer.version;
+    await runToastSave(`player-overrides:${playerId}`, async () => {
+      const updated = await adminJson<PlayerAdmin>(
+        `/api/v1/admin/players/${playerId}/overrides?version=${version}`,
+        "DELETE",
+      );
+      clearApiMemoryCache();
+      setPlayerSelection({ playerId, status: "ready", detail: updated });
+      await reloadAuditLogs();
+    }, "선수의 관리자 수정 상태를 초기화했습니다.", "선수의 관리자 수정 상태를 초기화하지 못했습니다.");
+  }
+
+  async function clearTeamOverride(fieldName: string) {
+    if (!selectedTeam || savingKey !== null) {
+      return;
+    }
+    const label = fieldLabel(teamFields, fieldName);
+    if (!window.confirm(`${label}의 관리자 수정 상태를 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.`)) {
+      return;
+    }
+    const teamId = selectedTeam.teamId;
+    const version = selectedTeam.version;
+    await runToastSave(`team-override:${teamId}:${fieldName}`, async () => {
+      const updated = await adminJson<TeamAdmin>(
+        `/api/v1/admin/teams/${teamId}/overrides/${encodeURIComponent(fieldName)}?version=${version}`,
+        "DELETE",
+      );
+      clearApiMemoryCache();
+      setTeamSelection({ teamId, status: "ready", detail: updated });
+      await reloadAuditLogs();
+    }, `${label}의 관리자 수정 상태를 초기화했습니다.`, `${label}의 관리자 수정 상태를 초기화하지 못했습니다.`);
+  }
+
+  async function clearPlayerOverride(fieldName: string) {
+    if (!selectedPlayer || savingKey !== null) {
+      return;
+    }
+    const label = fieldLabel(playerFields, fieldName);
+    if (!window.confirm(`${label}의 관리자 수정 상태를 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.`)) {
+      return;
+    }
+    const playerId = selectedPlayer.playerId;
+    const version = selectedPlayer.version;
+    await runToastSave(`player-override:${playerId}:${fieldName}`, async () => {
+      const updated = await adminJson<PlayerAdmin>(
+        `/api/v1/admin/players/${playerId}/overrides/${encodeURIComponent(fieldName)}?version=${version}`,
+        "DELETE",
+      );
+      clearApiMemoryCache();
+      setPlayerSelection({ playerId, status: "ready", detail: updated });
+      await reloadAuditLogs();
+    }, `${label}의 관리자 수정 상태를 초기화했습니다.`, `${label}의 관리자 수정 상태를 초기화하지 못했습니다.`);
   }
 
   async function uploadAdminMedia(
@@ -1070,8 +1169,12 @@ export function AdminPage({ authState }: AdminPageProps) {
       }
 
       applyAdminMediaResponse(completed);
+      const refreshed = await refreshVersionedMediaTarget(completed);
       clearApiMemoryCache();
       await reloadAuditLogs();
+      return refreshed
+        ? null
+        : "이미지 변경은 완료됐지만 최신 버전 정보를 불러오지 못했습니다. 편집 대상을 다시 선택해주세요.";
     }, "관리자 이미지를 적용했습니다.");
   }
 
@@ -1082,8 +1185,12 @@ export function AdminPage({ authState }: AdminPageProps) {
         "DELETE",
       );
       applyAdminMediaResponse(restored);
+      const refreshed = await refreshVersionedMediaTarget(restored);
       clearApiMemoryCache();
       await reloadAuditLogs();
+      return refreshed
+        ? null
+        : "이미지 복원은 완료됐지만 최신 버전 정보를 불러오지 못했습니다. 편집 대상을 다시 선택해주세요.";
     }, "관리자 이미지를 제거하고 원본 이미지로 복원했습니다.");
   }
 
@@ -1117,55 +1224,68 @@ export function AdminPage({ authState }: AdminPageProps) {
     });
   }
 
+  async function refreshVersionedMediaTarget(response: AdminMediaResponse): Promise<boolean> {
+    try {
+      if (response.targetType === "PLAYER_PHOTO") {
+        const detail = await adminGet<PlayerAdmin>(`/api/v1/admin/players/${response.targetId}`);
+        setPlayerSelection((current) => current.playerId === response.targetId
+          ? { playerId: response.targetId, status: "ready", detail }
+          : current);
+        return true;
+      }
+      if (response.targetType === "TEAM_LOGO") {
+        const detail = await adminGet<TeamAdmin>(`/api/v1/admin/teams/${response.targetId}`);
+        setTeamSelection((current) => current.teamId === response.targetId
+          ? { teamId: response.targetId, status: "ready", detail }
+          : current);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function saveFixture(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedFixture) {
       return;
     }
     const fixtureId = selectedFixture.fixture.fixtureId;
-    await saveFixtureSection(fixtureId, `/api/v1/admin/fixtures/${fixtureId}`, event.currentTarget, fixtureFields, "경기 기본 정보를 저장했습니다.");
-  }
-
-  async function saveFixtureSection(fixtureId: number, url: string, form: HTMLFormElement, fields: FieldConfig[], successMessage: string, method = "PUT") {
-    await saveFixturePayload(fixtureId, url, formBody(form, fields), successMessage, method);
+    await saveFixturePayload(
+      fixtureId,
+      `/api/v1/admin/fixtures/${fixtureId}`,
+      { ...formBody(event.currentTarget, fixtureFields), version: selectedFixture.fixture.version },
+      "경기 기본 정보를 저장했습니다.",
+    );
   }
 
   async function saveFixturePayload(fixtureId: number, url: string, body: Record<string, unknown>, successMessage: string, method = "PUT") {
     if (!canSaveFixture(fixtureId) || savingKey !== null) {
-      setError("현재 열려 있는 경기와 저장 대상이 일치하지 않습니다. 경기를 다시 선택해주세요.");
+      setMediaToast({
+        type: "error",
+        message: savingKey !== null
+          ? "다른 관리자 요청을 처리하고 있습니다. 잠시 후 다시 시도해주세요."
+          : "현재 열려 있는 경기와 저장 대상이 일치하지 않습니다. 경기를 다시 선택해주세요.",
+      });
       return;
     }
-    await runSave(`fixture:${fixtureId}`, async () => {
+    await runToastSave(`fixture:${fixtureId}`, async () => {
       if (!canSaveFixture(fixtureId)) {
-        setError("현재 열려 있는 경기와 저장 대상이 일치하지 않습니다. 경기를 다시 선택해주세요.");
-        return;
+        throw new Error("현재 열려 있는 경기와 저장 대상이 일치하지 않습니다. 경기를 다시 선택해주세요.");
       }
       const updated = await adminJson<FixtureDetailAdmin>(url, method, body);
       clearApiMemoryCache();
       if (canSaveFixture(fixtureId) && updated.fixture.fixtureId === fixtureId) {
         setFixtureSelection({ fixtureId, status: "ready", detail: updated });
       }
-      setMessage(successMessage);
       await reloadAuditLogs();
-    });
+    }, successMessage, "경기 정보를 저장하지 못했습니다.");
   }
 
   function canSaveFixture(fixtureId: number) {
     return fixtureSelection.status === "ready"
       && fixtureSelection.fixtureId === fixtureId
       && fixtureSelection.detail?.fixture.fixtureId === fixtureId;
-  }
-
-  async function runSave(key: string, action: () => Promise<void>): Promise<string | null> {
-    if (savingKey !== null) {
-      return "다른 관리자 요청을 처리하고 있습니다. 잠시 후 다시 시도해주세요.";
-    }
-    setSavingKey(key);
-    try {
-      return await runRequest(action);
-    } finally {
-      setSavingKey(null);
-    }
   }
 
   async function runToastSave(
@@ -1181,7 +1301,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     }
     setSavingKey(key);
     setError("");
-    setMessage("");
     try {
       await action();
       setMediaToast({ message: successMessage, type: "success" });
@@ -1195,7 +1314,11 @@ export function AdminPage({ authState }: AdminPageProps) {
     }
   }
 
-  async function runMediaSave(key: string, action: () => Promise<void>, successMessage: string): Promise<string | null> {
+  async function runMediaSave(
+    key: string,
+    action: () => Promise<string | null>,
+    successMessage: string,
+  ): Promise<string | null> {
     if (savingKey !== null) {
       const busyMessage = "다른 관리자 요청을 처리하고 있습니다. 잠시 후 다시 시도해주세요.";
       setMediaToast({ message: busyMessage, type: "error" });
@@ -1203,7 +1326,11 @@ export function AdminPage({ authState }: AdminPageProps) {
     }
     setSavingKey(key);
     try {
-      await action();
+      const outcomeMessage = await action();
+      if (outcomeMessage) {
+        setMediaToast({ message: outcomeMessage, type: "error" });
+        return outcomeMessage;
+      }
       setMediaToast({ message: successMessage, type: "success" });
       return null;
     } catch (nextError) {
@@ -1270,7 +1397,6 @@ export function AdminPage({ authState }: AdminPageProps) {
     markSyncCooldown(cooldownKey);
     setSyncingTask(task);
     setError("");
-    setMessage("");
     let result: AdminSyncResponse;
     try {
       result = await adminJson<AdminSyncResponse>(url, "POST");
@@ -1340,7 +1466,6 @@ export function AdminPage({ authState }: AdminPageProps) {
   const selectedCoverage = seasonCoverages.find((coverage) => coverage.seasonYear === authState.season) ?? null;
   async function runRequest(action: () => Promise<void>): Promise<string | null> {
     setError("");
-    setMessage("");
     try {
       await action();
       return null;
@@ -1393,7 +1518,6 @@ export function AdminPage({ authState }: AdminPageProps) {
 
       {activeSection === "editor" ? (
         <>
-      {message ? <div className="notice">{message}</div> : null}
       {error ? <div className="notice error">{error}</div> : null}
 
       <nav className="admin-tabs admin-editor-tabs" aria-label="편집 대상">
@@ -1480,6 +1604,8 @@ export function AdminPage({ authState }: AdminPageProps) {
                 fields={teamFields}
                 value={selectedTeam}
                 overrides={selectedTeam.manualOverrides}
+                onClearOverrides={() => void clearTeamOverrides()}
+                onClearOverride={(fieldName) => void clearTeamOverride(fieldName)}
                 submitLabel="팀 정보 저장"
                 onSubmit={saveTeam}
                 disabled={savingKey !== null}
@@ -1552,6 +1678,8 @@ export function AdminPage({ authState }: AdminPageProps) {
                 fields={playerFields}
                 value={selectedPlayer}
                 overrides={selectedPlayer.manualOverrides}
+                onClearOverrides={() => void clearPlayerOverrides()}
+                onClearOverride={(fieldName) => void clearPlayerOverride(fieldName)}
                 submitLabel="선수 정보 저장"
                 onSubmit={savePlayer}
                 disabled={savingKey !== null}
@@ -1614,7 +1742,6 @@ export function AdminPage({ authState }: AdminPageProps) {
               key={selectedFixture.fixture.fixtureId}
               detail={selectedFixture}
               onSaveFixture={saveFixture}
-              onSaveSection={saveFixtureSection}
               onSavePayload={saveFixturePayload}
               disabled={savingKey !== null}
             />
@@ -2122,6 +2249,8 @@ function AdminForm({
   fields,
   value,
   overrides,
+  onClearOverrides,
+  onClearOverride,
   submitLabel,
   onSubmit,
   disabled,
@@ -2130,6 +2259,8 @@ function AdminForm({
   fields: FieldConfig[];
   value: Record<string, unknown>;
   overrides?: AdminOverride[];
+  onClearOverrides?: () => void;
+  onClearOverride?: (fieldName: string) => void;
   submitLabel: string;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   disabled?: boolean;
@@ -2138,6 +2269,13 @@ function AdminForm({
   return (
     <form className="admin-edit-form" onSubmit={onSubmit}>
       <h3>{title}</h3>
+      <AdminOverrideStatus
+        overrides={overrides}
+        fields={fields}
+        onClear={onClearOverrides}
+        onClearField={onClearOverride}
+        disabled={disabled}
+      />
       <div className="admin-form-grid">
         {fields.map((field) => (
           <AdminField key={field.name} field={field} value={value[field.name]} overridden={overrideSet.has(field.name)} />
@@ -2148,20 +2286,77 @@ function AdminForm({
   );
 }
 
+function AdminOverrideStatus({
+  overrides,
+  fields,
+  onClear,
+  onClearField,
+  disabled,
+}: {
+  overrides?: AdminOverride[];
+  fields: FieldConfig[];
+  onClear?: () => void;
+  onClearField?: (fieldName: string) => void;
+  disabled?: boolean;
+}) {
+  if (!overrides || overrides.length === 0) {
+    return null;
+  }
+  const labels = new Map(fields.map((field) => [field.name, field.label]));
+  return (
+    <details className="admin-override-status">
+      <summary>
+        <strong>관리자 수정 적용 중</strong>
+        <span>{overrides.length}개 항목</span>
+      </summary>
+      <div className="admin-override-status-body">
+        <div className="admin-override-status-heading">
+          <p>아래 항목은 외부 API 동기화에서 제외됩니다.</p>
+          {onClear ? (
+            <button type="button" onClick={onClear} disabled={disabled}>
+              전체 초기화
+            </button>
+          ) : null}
+        </div>
+        <ul>
+          {overrides.map((override) => (
+            <li key={override.fieldName}>
+              <span>{labels.get(override.fieldName) ?? override.fieldName}</span>
+              <time dateTime={override.updatedAt ?? undefined}>{formatDateTime(override.updatedAt)}</time>
+              {onClearField ? (
+                <button
+                  type="button"
+                  onClick={() => onClearField(override.fieldName)}
+                  disabled={disabled}
+                >
+                  초기화
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
+function fieldLabel(fields: FieldConfig[], fieldName: string) {
+  return fields.find((field) => field.name === fieldName)?.label ?? fieldName;
+}
+
 function FixtureEditor({
   detail,
   onSaveFixture,
-  onSaveSection,
   onSavePayload,
   disabled,
 }: {
   detail: FixtureDetailAdmin;
   onSaveFixture: (event: FormEvent<HTMLFormElement>) => void;
-  onSaveSection: (fixtureId: number, url: string, form: HTMLFormElement, fields: FieldConfig[], successMessage: string, method?: string) => Promise<void>;
   onSavePayload: (fixtureId: number, url: string, body: Record<string, unknown>, successMessage: string, method?: string) => Promise<void>;
   disabled?: boolean;
 }) {
   const fixtureId = detail.fixture.fixtureId;
+  const finishedDataEditingDisabled = disabled || !isFinishedFixture(detail.fixture);
   const [addingEvent, setAddingEvent] = useState(false);
   const [newEventValue, setNewEventValue] = useState(() => newFixtureEventValue(detail));
 
@@ -2171,6 +2366,42 @@ function FixtureEditor({
     }
   }, [addingEvent, detail]);
 
+  function clearFixtureOverrides(url: string, label: string, version: number, fieldName?: string) {
+    const targetLabel = fieldName ? fieldLabel(
+      fieldName === "events"
+        ? eventOverrideFields
+        : [...fixtureFields, ...lineupFields, ...teamStatFields, ...playerStatFields],
+      fieldName,
+    ) : label;
+    const scopeText = fieldName ? targetLabel : `${label} 전체`;
+    if (!window.confirm(`${scopeText}의 관리자 수정 상태를 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.`)) {
+      return;
+    }
+    const overrideUrl = fieldName ? `${url}/${encodeURIComponent(fieldName)}` : url;
+    const endpoint = `${overrideUrl}?version=${version}`;
+    void onSavePayload(
+      fixtureId,
+      endpoint,
+      {},
+      `${scopeText}의 관리자 수정 상태를 초기화했습니다.`,
+      "DELETE",
+    );
+  }
+
+  function deleteFixtureEvent(event: FixtureEventAdmin) {
+    const eventLabel = `#${event.eventSequence} ${eventTypeLabel(event.eventType)} ${adminName(event.playerNameKo, event.playerName)}`;
+    if (!window.confirm(`${eventLabel} 이벤트를 삭제할까요? 삭제한 이벤트는 관리자 수정 적용 중 상태가 해제되기 전까지 동기화에서 제외됩니다.`)) {
+      return;
+    }
+    void onSavePayload(
+      fixtureId,
+      `/api/v1/admin/fixtures/${fixtureId}/events/${event.eventSequence}?version=${detail.fixture.version}`,
+      {},
+      `${eventLabel} 이벤트를 삭제했습니다.`,
+      "DELETE",
+    );
+  }
+
   return (
     <div className="fixture-admin-editor">
       <NestedAdminSection title="경기 기본 정보" count={1}>
@@ -2178,13 +2409,42 @@ function FixtureEditor({
           title={`${detail.fixture.homeTeamName ?? "-"} 대 ${detail.fixture.awayTeamName ?? "-"}`}
           fields={fixtureFields}
           value={detail.fixture}
+          overrides={detail.fixture.manualOverrides}
+          onClearOverrides={() => clearFixtureOverrides(
+            `/api/v1/admin/fixtures/${fixtureId}/overrides`,
+            "경기 기본 정보",
+            detail.fixture.version,
+          )}
+          onClearOverride={(fieldName) => clearFixtureOverrides(
+            `/api/v1/admin/fixtures/${fixtureId}/overrides`,
+            "경기 기본 정보",
+            detail.fixture.version,
+            fieldName,
+          )}
           submitLabel="경기 정보 저장"
           onSubmit={onSaveFixture}
           disabled={disabled}
         />
       </NestedAdminSection>
       <NestedAdminSection title="경기 이벤트" count={detail.events.length}>
-        <button type="button" className="admin-add-button" onClick={() => setAddingEvent((current) => !current)} disabled={disabled}>
+        {finishedDataEditingDisabled ? <p className="muted">종료된 경기의 이벤트만 수정할 수 있습니다.</p> : null}
+        <AdminOverrideStatus
+          overrides={detail.eventOverrides}
+          fields={eventOverrideFields}
+          onClear={() => clearFixtureOverrides(
+            `/api/v1/admin/fixtures/${fixtureId}/events/overrides`,
+            "경기 이벤트",
+            detail.fixture.version,
+          )}
+          onClearField={(fieldName) => clearFixtureOverrides(
+            `/api/v1/admin/fixtures/${fixtureId}/events/overrides`,
+            "경기 이벤트",
+            detail.fixture.version,
+            fieldName,
+          )}
+          disabled={disabled}
+        />
+        <button type="button" className="admin-add-button" onClick={() => setAddingEvent((current) => !current)} disabled={finishedDataEditingDisabled}>
           {addingEvent ? "이벤트 추가 취소" : "이벤트 추가"}
         </button>
         {addingEvent ? (
@@ -2199,12 +2459,12 @@ function FixtureEditor({
                 void onSavePayload(
                   fixtureId,
                   `/api/v1/admin/fixtures/${fixtureId}/events`,
-                  body,
+                  { ...body, version: detail.fixture.version },
                   "이벤트를 추가했습니다.",
                   "POST",
                 ).then(() => setAddingEvent(false));
               }}
-              disabled={disabled}
+              disabled={finishedDataEditingDisabled}
             />
           </details>
         ) : null}
@@ -2220,11 +2480,12 @@ function FixtureEditor({
                 void onSavePayload(
                   fixtureId,
                   `/api/v1/admin/fixtures/${fixtureId}/events/${event.eventSequence}`,
-                  body,
+                  { ...body, version: detail.fixture.version },
                   "이벤트를 저장했습니다.",
                 );
               }}
-              disabled={disabled}
+              onDelete={() => deleteFixtureEvent(event)}
+              disabled={finishedDataEditingDisabled}
             />
           </details>
         ))}
@@ -2237,14 +2498,28 @@ function FixtureEditor({
             title={`${adminName(lineup.teamNameKo, lineup.teamName)} · ${adminName(lineup.playerNameKo, lineup.playerName)}`}
             fields={lineupFields}
             value={lineup}
+            overrides={lineup.manualOverrides}
+            onClearOverrides={() => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/lineups/${lineup.teamId}/${lineup.playerId}/overrides`,
+              "라인업",
+              lineup.version,
+            )}
+            onClearOverride={(fieldName) => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/lineups/${lineup.teamId}/${lineup.playerId}/overrides`,
+              "라인업",
+              lineup.version,
+              fieldName,
+            )}
             submitLabel="라인업 저장"
             onSubmit={(submitEvent) => {
               submitEvent.preventDefault();
-              void onSaveSection(
+              void onSavePayload(
                 fixtureId,
                 `/api/v1/admin/fixtures/${fixtureId}/lineups/${lineup.teamId}/${lineup.playerId}`,
-                submitEvent.currentTarget,
-                lineupFields,
+                {
+                  ...formBody(submitEvent.currentTarget, lineupFields),
+                  version: lineup.version,
+                },
                 "라인업을 저장했습니다.",
               );
             }}
@@ -2254,6 +2529,7 @@ function FixtureEditor({
         ))}
       </NestedAdminSection>
       <NestedAdminSection title="팀 경기 통계" count={detail.teamStats.length}>
+        {finishedDataEditingDisabled ? <p className="muted">종료된 경기의 팀별 스탯만 수정할 수 있습니다.</p> : null}
         {detail.teamStats.map((stat) => (
           <details className="nested-admin-item" key={stat.teamId}>
             <summary>{stat.teamName ?? "팀"}</summary>
@@ -2261,23 +2537,38 @@ function FixtureEditor({
             title={stat.teamName ?? "팀"}
             fields={teamStatFields}
             value={stat}
+            overrides={stat.manualOverrides}
+            onClearOverrides={() => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/team-stats/${stat.teamId}/overrides`,
+              `${stat.teamName ?? "팀"} 경기 스탯`,
+              stat.version,
+            )}
+            onClearOverride={(fieldName) => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/team-stats/${stat.teamId}/overrides`,
+              `${stat.teamName ?? "팀"} 경기 스탯`,
+              stat.version,
+              fieldName,
+            )}
             submitLabel="팀 통계 저장"
             onSubmit={(submitEvent) => {
               submitEvent.preventDefault();
-              void onSaveSection(
+              void onSavePayload(
                 fixtureId,
                 `/api/v1/admin/fixtures/${fixtureId}/team-stats/${stat.teamId}`,
-                submitEvent.currentTarget,
-                teamStatFields,
+                {
+                  ...formBody(submitEvent.currentTarget, teamStatFields),
+                  version: stat.version,
+                },
                 "팀 경기 통계를 저장했습니다.",
               );
             }}
-            disabled={disabled}
+            disabled={finishedDataEditingDisabled}
             />
           </details>
         ))}
       </NestedAdminSection>
       <NestedAdminSection title="선수 경기 통계" count={detail.playerStats.length}>
+        {finishedDataEditingDisabled ? <p className="muted">종료된 경기의 선수별 스탯만 수정할 수 있습니다.</p> : null}
         {detail.playerStats.map((stat) => (
           <details className="nested-admin-item" key={stat.playerId}>
             <summary>{adminName(stat.playerNameKo, stat.playerName)} · {adminName(stat.teamNameKo, stat.teamName)}</summary>
@@ -2285,24 +2576,43 @@ function FixtureEditor({
             title={`${adminName(stat.playerNameKo, stat.playerName)} · ${adminName(stat.teamNameKo, stat.teamName)}`}
             fields={playerStatFields}
             value={stat}
+            overrides={stat.manualOverrides}
+            onClearOverrides={() => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/player-stats/${stat.playerId}/overrides`,
+              `${adminName(stat.playerNameKo, stat.playerName)} 경기 스탯`,
+              stat.version,
+            )}
+            onClearOverride={(fieldName) => clearFixtureOverrides(
+              `/api/v1/admin/fixtures/${fixtureId}/player-stats/${stat.playerId}/overrides`,
+              `${adminName(stat.playerNameKo, stat.playerName)} 경기 스탯`,
+              stat.version,
+              fieldName,
+            )}
             submitLabel="선수 통계 저장"
             onSubmit={(submitEvent) => {
               submitEvent.preventDefault();
-              void onSaveSection(
+              void onSavePayload(
                 fixtureId,
                 `/api/v1/admin/fixtures/${fixtureId}/player-stats/${stat.playerId}`,
-                submitEvent.currentTarget,
-                playerStatFields,
+                {
+                  ...formBody(submitEvent.currentTarget, playerStatFields),
+                  version: stat.version,
+                },
                 "선수 경기 통계를 저장했습니다.",
               );
             }}
-            disabled={disabled}
+            disabled={finishedDataEditingDisabled}
             />
           </details>
         ))}
       </NestedAdminSection>
     </div>
   );
+}
+
+function isFinishedFixture(fixture: FixtureAdmin) {
+  return fixture.fixtureStatus?.toUpperCase() === "FINISHED"
+    || ["FT", "AET", "PEN"].includes(fixture.statusShort?.toUpperCase() ?? "");
 }
 
 function NestedAdminSection({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
@@ -2336,6 +2646,7 @@ function EventAdminForm({
   value,
   submitLabel,
   onSubmit,
+  onDelete,
   disabled,
 }: {
   title: string;
@@ -2343,6 +2654,7 @@ function EventAdminForm({
   value: Record<string, unknown>;
   submitLabel: string;
   onSubmit: (body: Record<string, unknown>) => void;
+  onDelete?: () => void;
   disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(() => eventDraftValue(value));
@@ -2401,6 +2713,11 @@ function EventAdminForm({
         ))}
       </div>
       <button type="submit" disabled={disabled}>{submitLabel}</button>
+      {onDelete ? (
+        <button type="button" className="admin-delete-button" onClick={onDelete} disabled={disabled}>
+          이벤트 삭제
+        </button>
+      ) : null}
     </form>
   );
 }

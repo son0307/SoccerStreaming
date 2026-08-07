@@ -17,5 +17,8 @@ public interface FixtureEventRepository extends JpaRepository<FixtureEvent, Long
             "order by e.elapsed asc, coalesce(e.extra, 0) asc, e.eventSequence asc")
     List<FixtureEvent> findAllByFixtureFixtureIdOrderByMatchTimeAsc(@Param("fixtureId") Long fixtureId);
 
+    @Query("select max(e.eventSequence) from FixtureEvent e where e.fixture.fixtureId = :fixtureId")
+    Integer findMaxEventSequenceByFixtureId(@Param("fixtureId") Long fixtureId);
+
     Optional<FixtureEvent> findByFixtureFixtureIdAndEventSequence(Long fixtureId, Integer eventSequence);
 }

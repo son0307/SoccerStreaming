@@ -2,6 +2,8 @@ package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballLiveDto;
+import com.son.soccerStreaming.admin.entity.AdminOverrideTargetType;
+import com.son.soccerStreaming.admin.service.AdminOverrideService;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.global.config.RedisCacheConfig;
 import com.son.soccerStreaming.player.entity.Player;
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -32,6 +35,15 @@ public class ApiFootballFixturePlayerStatSyncService {
     private final PlayerFixtureStatRepository playerFixtureStatRepository;
     private final TeamRepository teamRepository;
     private final ApiFootballPlayerSyncService apiFootballPlayerSyncService;
+    private final AdminOverrideService adminOverrideService;
+    private static final List<String> OVERRIDE_FIELDS = List.of(
+            "minutesPlayed", "rating", "captain", "substitute", "goals", "assists", "conceded",
+            "saves", "shotsTotal", "shotsOnTarget", "passesTotal", "passesKey", "passesAccurate",
+            "passAccuracy", "tacklesTotal", "blocks", "interceptions", "duelsTotal", "duelsWon",
+            "dribblesAttempts", "dribblesSuccess", "dribblesPast", "foulsDrawn", "foulsCommitted",
+            "yellowCards", "redCards", "offsides", "penaltyWon", "penaltyCommitted", "penaltyScored",
+            "penaltyMissed", "penaltySaved"
+    );
 
     @Caching(evict = {
             @CacheEvict(
@@ -174,42 +186,71 @@ public class ApiFootballFixturePlayerStatSyncService {
         ApiFootballLiveDto.Fouls fouls = stat.getFouls();
         ApiFootballLiveDto.Cards cards = stat.getCards();
         ApiFootballLiveDto.Penalty penalty = stat.getPenalty();
-        Integer passesTotal = passes != null ? passes.getTotal() : null;
-        Integer passesAccurate = passes != null ? parseInteger(passes.getAccuracy()) : null;
+        Set<String> overrides = adminOverrideService.overriddenFields(
+                AdminOverrideTargetType.FIXTURE_PLAYER_STAT,
+                entity.getId(),
+                OVERRIDE_FIELDS
+        );
+        Integer minutesPlayed = adminOverrideService.apiValueUnlessOverridden(
+                overrides, "minutesPlayed", entity.getMinutesPlayed(),
+                PlayerFixtureStat.normalizeMinutesPlayed(games != null ? games.getMinutes() : null)
+        );
+        Integer redCards = adminOverrideService.apiValueUnlessOverridden(
+                overrides, "redCards", entity.getRedCards(), cards != null ? cards.getRed() : null
+        );
+        Integer goalsValue = overrides.contains("goals")
+                ? entity.getGoals()
+                : PlayerFixtureStat.normalizeScoringStat(minutesPlayed, goals != null ? goals.getTotal() : null);
+        Integer assistsValue = overrides.contains("assists")
+                ? entity.getAssists()
+                : PlayerFixtureStat.normalizeScoringStat(minutesPlayed, goals != null ? goals.getAssists() : null);
+        Integer yellowCards = overrides.contains("yellowCards")
+                ? entity.getYellowCards()
+                : PlayerFixtureStat.normalizeYellowCards(cards != null ? cards.getYellow() : null, redCards);
+        Integer passesTotal = adminOverrideService.apiValueUnlessOverridden(
+                overrides, "passesTotal", entity.getPassesTotal(), passes != null ? passes.getTotal() : null
+        );
+        Integer passesAccurate = adminOverrideService.apiValueUnlessOverridden(
+                overrides, "passesAccurate", entity.getPassesAccurate(),
+                passes != null ? parseInteger(passes.getAccuracy()) : null
+        );
+        Integer passAccuracy = adminOverrideService.apiValueUnlessOverridden(
+                overrides, "passAccuracy", entity.getPassAccuracy(), passAccuracyOf(passesAccurate, passesTotal)
+        );
 
-        entity.updateLiveStat(
-                games != null ? games.getMinutes() : null,
-                games != null ? parseDouble(games.getRating()) : null,
-                games != null ? games.getCaptain() : null,
-                games != null ? games.getSubstitute() : null,
-                goals != null ? goals.getTotal() : null,
-                goals != null ? goals.getAssists() : null,
-                goals != null ? goals.getConceded() : null,
-                goals != null ? goals.getSaves() : null,
-                shots != null ? shots.getTotal() : null,
-                shots != null ? shots.getOn() : null,
+        entity.updateStatValues(
+                minutesPlayed,
+                adminOverrideService.apiValueUnlessOverridden(overrides, "rating", entity.getRating(), games != null ? parseDouble(games.getRating()) : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "captain", entity.getIsCaptain(), games != null ? games.getCaptain() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "substitute", entity.getIsSubstitute(), games != null ? games.getSubstitute() : null),
+                goalsValue,
+                assistsValue,
+                adminOverrideService.apiValueUnlessOverridden(overrides, "conceded", entity.getConceded(), goals != null ? goals.getConceded() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "saves", entity.getSaves(), goals != null ? goals.getSaves() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsTotal", entity.getShotsTotal(), shots != null ? shots.getTotal() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsOnTarget", entity.getShotsOnTarget(), shots != null ? shots.getOn() : null),
                 passesTotal,
-                passes != null ? passes.getKey() : null,
+                adminOverrideService.apiValueUnlessOverridden(overrides, "passesKey", entity.getPassesKey(), passes != null ? passes.getKey() : null),
                 passesAccurate,
-                passAccuracyOf(passesAccurate, passesTotal),
-                tackles != null ? tackles.getTotal() : null,
-                tackles != null ? tackles.getBlocks() : null,
-                tackles != null ? tackles.getInterceptions() : null,
-                duels != null ? duels.getTotal() : null,
-                duels != null ? duels.getWon() : null,
-                dribbles != null ? dribbles.getAttempts() : null,
-                dribbles != null ? dribbles.getSuccess() : null,
-                dribbles != null ? dribbles.getPast() : null,
-                fouls != null ? fouls.getDrawn() : null,
-                fouls != null ? fouls.getCommitted() : null,
-                cards != null ? cards.getYellow() : null,
-                cards != null ? cards.getRed() : null,
-                stat.getOffsides(),
-                penalty != null ? penalty.getWon() : null,
-                penalty != null ? penalty.getCommited() : null,
-                penalty != null ? penalty.getScored() : null,
-                penalty != null ? penalty.getMissed() : null,
-                penalty != null ? penalty.getSaved() : null
+                passAccuracy,
+                adminOverrideService.apiValueUnlessOverridden(overrides, "tacklesTotal", entity.getTacklesTotal(), tackles != null ? tackles.getTotal() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "blocks", entity.getBlocks(), tackles != null ? tackles.getBlocks() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "interceptions", entity.getInterceptions(), tackles != null ? tackles.getInterceptions() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "duelsTotal", entity.getDuelsTotal(), duels != null ? duels.getTotal() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "duelsWon", entity.getDuelsWon(), duels != null ? duels.getWon() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "dribblesAttempts", entity.getDribblesAttempts(), dribbles != null ? dribbles.getAttempts() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "dribblesSuccess", entity.getDribblesSuccess(), dribbles != null ? dribbles.getSuccess() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "dribblesPast", entity.getDribblesPast(), dribbles != null ? dribbles.getPast() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "foulsDrawn", entity.getFoulsDrawn(), fouls != null ? fouls.getDrawn() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "foulsCommitted", entity.getFoulsCommitted(), fouls != null ? fouls.getCommitted() : null),
+                yellowCards,
+                redCards,
+                adminOverrideService.apiValueUnlessOverridden(overrides, "offsides", entity.getOffsides(), stat.getOffsides()),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "penaltyWon", entity.getPenaltyWon(), penalty != null ? penalty.getWon() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "penaltyCommitted", entity.getPenaltyCommitted(), penalty != null ? penalty.getCommited() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "penaltyScored", entity.getPenaltyScored(), penalty != null ? penalty.getScored() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "penaltyMissed", entity.getPenaltyMissed(), penalty != null ? penalty.getMissed() : null),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "penaltySaved", entity.getPenaltySaved(), penalty != null ? penalty.getSaved() : null)
         );
     }
 

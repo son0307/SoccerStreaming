@@ -23,7 +23,6 @@ import org.springframework.cache.annotation.Caching;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.util.HtmlUtils;
 
 import java.time.LocalDate;
@@ -46,7 +45,7 @@ public class ApiFootballPlayerSyncService {
     private final TeamRepository teamRepository;
     private final TeamStandingRepository teamStandingRepository;
     private final AdminOverrideService adminOverrideService;
-    private final TransactionTemplate transactionTemplate;
+    private final OptimisticLockRetryExecutor optimisticLockRetryExecutor;
     private final EntityManager entityManager;
     private final ApiFootballSyncStatusService apiFootballSyncStatusService;
     private final ImageCacheService imageCacheService;
@@ -218,28 +217,31 @@ public class ApiFootballPlayerSyncService {
                                                                     Long requestedTeamId,
                                                                     Integer league,
                                                                     Integer season) {
-        RegisteredPlayerPageSyncResult result = transactionTemplate.execute(status -> {
-            Team managedTeam = teamRepository.findByTeamId(requestedTeamId).orElse(null);
-            if (managedTeam == null) {
-                log.warn("Skip registered players page because team does not exist. teamId={}", requestedTeamId);
-                return new RegisteredPlayerPageSyncResult(0, Set.of());
-            }
+        return optimisticLockRetryExecutor.execute(
+                "registered-players:team=%s;season=%s".formatted(requestedTeamId, season),
+                () -> {
+                    Team managedTeam = teamRepository.findByTeamId(requestedTeamId).orElse(null);
+                    if (managedTeam == null) {
+                        log.warn("Skip registered players page because team does not exist. teamId={}", requestedTeamId);
+                        return new RegisteredPlayerPageSyncResult(0, Set.of());
+                    }
 
-            int syncedCount = 0;
-            Set<Long> playerIds = new LinkedHashSet<>();
-            for (ApiFootballPlayerDto.RegisteredPlayerResponse playerResponse : players) {
-                Optional<Long> playerId = upsertRegisteredPlayer(playerResponse, managedTeam, league, season);
-                if (playerId.isPresent()) {
-                    syncedCount++;
-                    playerIds.add(playerId.get());
+                    int syncedCount = 0;
+                    Set<Long> playerIds = new LinkedHashSet<>();
+                    for (ApiFootballPlayerDto.RegisteredPlayerResponse playerResponse : players) {
+                        Optional<Long> playerId = upsertRegisteredPlayer(
+                                playerResponse, managedTeam, league, season);
+                        if (playerId.isPresent()) {
+                            syncedCount++;
+                            playerIds.add(playerId.get());
+                        }
+                    }
+                    // Bulk admin sync can run for a long time, so release managed entities after each API page.
+                    entityManager.flush();
+                    entityManager.clear();
+                    return new RegisteredPlayerPageSyncResult(syncedCount, playerIds);
                 }
-            }
-            // Bulk admin sync can run for a long time, so release managed entities after each API page.
-            entityManager.flush();
-            entityManager.clear();
-            return new RegisteredPlayerPageSyncResult(syncedCount, playerIds);
-        });
-        return result != null ? result : new RegisteredPlayerPageSyncResult(0, Set.of());
+        );
     }
 
     @Transactional

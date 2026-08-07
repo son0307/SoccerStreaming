@@ -42,6 +42,8 @@ import com.son.soccerStreaming.auth.repository.AppUserRepository;
 import com.son.soccerStreaming.player.repository.PlayerRepository;
 import com.son.soccerStreaming.team.repository.TeamRepository;
 import com.son.soccerStreaming.team.repository.TeamStandingRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -108,6 +110,33 @@ public class AdminService {
             "photoUrl"
     );
     private static final Set<String> EVENT_TYPES = Set.of("Goal", "Card", "Subst", "Var");
+    private static final String FIXTURE_EVENTS_OVERRIDE_FIELD = "events";
+    private static final Set<String> FIXTURE_EVENT_OVERRIDE_FIELDS = Set.of(FIXTURE_EVENTS_OVERRIDE_FIELD);
+    private static final Set<String> FIXTURE_OVERRIDE_FIELDS = Set.of(
+            "fixtureDate", "referee", "venueId", "venueName", "venueNameKo", "venueCity",
+            "homeFormation", "awayFormation", "homeCoachName", "awayCoachName",
+            "homePlayerColorPrimary", "homePlayerColorNumber", "homePlayerColorBorder",
+            "homeGoalkeeperColorPrimary", "homeGoalkeeperColorNumber", "homeGoalkeeperColorBorder",
+            "awayPlayerColorPrimary", "awayPlayerColorNumber", "awayPlayerColorBorder",
+            "awayGoalkeeperColorPrimary", "awayGoalkeeperColorNumber", "awayGoalkeeperColorBorder"
+    );
+    private static final Set<String> FIXTURE_LINEUP_OVERRIDE_FIELDS = Set.of(
+            "jerseyNumber", "position", "grid", "starter"
+    );
+    private static final Set<String> FIXTURE_TEAM_STAT_OVERRIDE_FIELDS = Set.of(
+            "shotsOnGoal", "shotsOffGoal", "totalShots", "blockedShots", "shotsInsideBox",
+            "shotsOutsideBox", "fouls", "cornerKicks", "offsides", "ballPossession",
+            "yellowCards", "redCards", "goalkeeperSaves", "totalPasses", "passesAccurate",
+            "passAccuracy", "expectedGoals"
+    );
+    private static final Set<String> FIXTURE_PLAYER_STAT_OVERRIDE_FIELDS = Set.of(
+            "minutesPlayed", "rating", "captain", "substitute", "goals", "assists", "conceded",
+            "saves", "shotsTotal", "shotsOnTarget", "passesTotal", "passesKey", "passesAccurate",
+            "passAccuracy", "tacklesTotal", "blocks", "interceptions", "duelsTotal", "duelsWon",
+            "dribblesAttempts", "dribblesSuccess", "dribblesPast", "foulsDrawn", "foulsCommitted",
+            "yellowCards", "redCards", "offsides", "penaltyWon", "penaltyCommitted", "penaltyScored",
+            "penaltyMissed", "penaltySaved"
+    );
     private static final Map<String, Set<String>> EVENT_DETAILS_BY_TYPE = Map.of(
             "Goal", Set.of("Normal Goal", "Own Goal", "Penalty", "Missed Penalty"),
             "Card", Set.of("Yellow Card", "Red card"),
@@ -169,6 +198,7 @@ public class AdminService {
     private final ApiFootballSyncExecutionGuard apiFootballSyncExecutionGuard;
     private final ApiFootballSyncFailureRetryScheduler apiFootballSyncFailureRetryScheduler;
     private final MediaUrlService mediaUrlService;
+    private final EntityManager entityManager;
     private final ConcurrentMap<String, ManualSyncState> manualSyncStates = new ConcurrentHashMap<>();
 
     @Transactional(readOnly = true)
@@ -242,6 +272,8 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse updateFixture(Long adminUserId, Long fixtureId, AdminDto.FixtureUpdateRequest request) {
         request.normalizeTextFields();
         Fixture fixture = findFixtureWithTeams(fixtureId);
+        validateAdminEditVersion(request.getVersion(), fixture.getVersion());
+        entityManager.lock(fixture, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
         List<FieldChange> changes = changedFixtureFields(fixture, request);
         LocalDateTime fixtureDateUtc = request.getFixtureDate() != null
                 ? LocalDateTime.ofInstant(request.getFixtureDate().toInstant(), ZoneOffset.UTC)
@@ -284,8 +316,49 @@ public class AdminService {
                 request.getAwayGoalkeeperColorNumber(),
                 request.getAwayGoalkeeperColorBorder()
         );
+        if (!changes.isEmpty()) {
+            adminOverrideService.markOverrides(
+                    AdminOverrideTargetType.FIXTURE,
+                    fixtureId,
+                    fieldNames(changes)
+            );
+        }
+        entityManager.flush();
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixture.getFixtureId(), "Fixture updated", changes);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long version
+    ) {
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        prepareOverrideClear(version, fixture.getVersion(), fixture);
+        long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.FIXTURE, fixtureId);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE", fixtureId, "ALL", deletedCount);
+        evictFixtureCaches(fixtureId);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureOverride(
+            Long adminUserId,
+            Long fixtureId,
+            String fieldName,
+            Long version
+    ) {
+        validateOverrideField(FIXTURE_OVERRIDE_FIELDS, fieldName);
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        prepareOverrideClear(version, fixture.getVersion(), fixture);
+        long deletedCount = adminOverrideService.clearOverride(
+                AdminOverrideTargetType.FIXTURE, fixtureId, fieldName);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE", fixtureId, fieldName, deletedCount);
+        evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
     }
 
@@ -297,7 +370,9 @@ public class AdminService {
             AdminDto.FixtureEventUpdateRequest request
     ) {
         request.normalizeTextFields();
-        Fixture fixture = findFixtureWithTeams(fixtureId);
+        Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        validateFinishedFixture(fixture);
+        validateAdminEditVersion(request.getVersion(), fixture.getVersion());
         FixtureEvent event = fixtureEventRepository.findByFixtureFixtureIdAndEventSequence(fixtureId, eventSequence)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
         validateFixtureEventRequest(fixture, request);
@@ -312,6 +387,12 @@ public class AdminService {
                 request.getEventDetail(),
                 request.getComments()
         );
+        adminOverrideService.markOverrides(
+                AdminOverrideTargetType.FIXTURE_EVENT,
+                fixtureId,
+                List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
+        );
+        incrementEventAggregateVersion(fixture);
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event updated: sequence=" + eventSequence, List.of());
         return toFixtureDetailResponse(fixture);
@@ -324,16 +405,13 @@ public class AdminService {
             AdminDto.FixtureEventUpdateRequest request
     ) {
         request.normalizeTextFields();
-        Fixture fixture = findFixtureWithTeams(fixtureId);
+        Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        validateFinishedFixture(fixture);
+        validateAdminEditVersion(request.getVersion(), fixture.getVersion());
         validateFixtureEventRequest(fixture, request);
         String eventType = normalizeEventType(request.getEventType());
-        Integer nextSequence = fixtureEventRepository.findAllByFixtureFixtureIdOrderByMatchTimeAsc(fixtureId)
-                .stream()
-                .map(FixtureEvent::getEventSequence)
-                .filter(Objects::nonNull)
-                .max(Integer::compareTo)
-                .map(sequence -> sequence + 1)
-                .orElse(1);
+        Integer maxSequence = fixtureEventRepository.findMaxEventSequenceByFixtureId(fixtureId);
+        Integer nextSequence = maxSequence == null ? 1 : maxSequence + 1;
         FixtureEvent event = FixtureEvent.builder()
                 .fixture(fixture)
                 .eventSequence(nextSequence)
@@ -347,8 +425,72 @@ public class AdminService {
                 .comments(request.getComments())
                 .build();
         fixtureEventRepository.save(event);
+        adminOverrideService.markOverrides(
+                AdminOverrideTargetType.FIXTURE_EVENT,
+                fixtureId,
+                List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
+        );
+        incrementEventAggregateVersion(fixture);
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event created: sequence=" + nextSequence, List.of());
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse deleteFixtureEvent(
+            Long adminUserId,
+            Long fixtureId,
+            Integer eventSequence,
+            Long version
+    ) {
+        Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        validateFinishedFixture(fixture);
+        validateAdminEditVersion(version, fixture.getVersion());
+        FixtureEvent event = fixtureEventRepository.findByFixtureFixtureIdAndEventSequence(fixtureId, eventSequence)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        fixtureEventRepository.delete(event);
+        adminOverrideService.markOverrides(
+                AdminOverrideTargetType.FIXTURE_EVENT,
+                fixtureId,
+                List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
+        );
+        incrementEventAggregateVersion(fixture);
+        evictFixtureCaches(fixtureId);
+        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event deleted: sequence=" + eventSequence, List.of());
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureEventOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long version
+    ) {
+        Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        prepareEventOverrideClear(version, fixture);
+        long deletedCount = adminOverrideService.clearOverrides(
+                AdminOverrideTargetType.FIXTURE_EVENT, fixtureId);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_EVENT", fixtureId, "ALL", deletedCount);
+        evictFixtureCaches(fixtureId);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureEventOverride(
+            Long adminUserId,
+            Long fixtureId,
+            String fieldName,
+            Long version
+    ) {
+        validateOverrideField(FIXTURE_EVENT_OVERRIDE_FIELDS, fieldName);
+        Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        prepareEventOverrideClear(version, fixture);
+        long deletedCount = adminOverrideService.clearOverride(
+                AdminOverrideTargetType.FIXTURE_EVENT, fixtureId, fieldName);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_EVENT", fixtureId, fieldName, deletedCount);
+        evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
     }
 
@@ -367,14 +509,68 @@ public class AdminService {
         validateFixturePlayer(fixtureId, teamId, playerId);
         FixtureLineup lineup = fixtureLineupRepository.findByFixtureFixtureIdAndTeamTeamIdAndPlayerPlayerId(fixtureId, teamId, playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        validateAdminEditVersion(request.getVersion(), lineup.getVersion());
+        entityManager.lock(lineup, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        Integer jerseyNumber = request.getJerseyNumber() != null
+                ? request.getJerseyNumber()
+                : lineup.getJerseyNumber();
+        List<FieldChange> changes = changedFixtureLineupFields(lineup, request, jerseyNumber);
         lineup.updateLineup(
-                lineup.getJerseyNumber(),
+                jerseyNumber,
                 request.getPosition(),
                 request.getGrid(),
                 Boolean.TRUE.equals(request.getStarter())
         );
+        if (!changes.isEmpty()) {
+            adminOverrideService.markOverrides(
+                    AdminOverrideTargetType.FIXTURE_LINEUP,
+                    lineup.getId(),
+                    fieldNames(changes)
+            );
+        }
+        entityManager.flush();
         evictFixtureCaches(fixtureId);
-        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture lineup updated: player=" + playerId, List.of());
+        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture lineup updated: player=" + playerId, changes);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureLineupOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long teamId,
+            Long playerId,
+            Long version
+    ) {
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        FixtureLineup lineup = findFixtureLineup(fixtureId, teamId, playerId);
+        prepareOverrideClear(version, lineup.getVersion(), lineup);
+        long deletedCount = adminOverrideService.clearOverrides(
+                AdminOverrideTargetType.FIXTURE_LINEUP, lineup.getId());
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_LINEUP", lineup.getId(), "ALL", deletedCount);
+        evictFixtureCaches(fixtureId);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureLineupOverride(
+            Long adminUserId,
+            Long fixtureId,
+            Long teamId,
+            Long playerId,
+            String fieldName,
+            Long version
+    ) {
+        validateOverrideField(FIXTURE_LINEUP_OVERRIDE_FIELDS, fieldName);
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        FixtureLineup lineup = findFixtureLineup(fixtureId, teamId, playerId);
+        prepareOverrideClear(version, lineup.getVersion(), lineup);
+        long deletedCount = adminOverrideService.clearOverride(
+                AdminOverrideTargetType.FIXTURE_LINEUP, lineup.getId(), fieldName);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_LINEUP", lineup.getId(), fieldName, deletedCount);
+        evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
     }
 
@@ -391,9 +587,13 @@ public class AdminService {
             AdminDto.FixtureTeamStatUpdateRequest request
     ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
+        validateFinishedFixture(fixture);
         validateFixtureTeam(fixture, teamId);
         FixtureStat stat = fixtureStatRepository.findByFixtureFixtureIdAndTeamTeamId(fixtureId, teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        validateAdminEditVersion(request.getVersion(), stat.getVersion());
+        Integer passAccuracy = calculatePassAccuracy(request.getPassesAccurate(), request.getTotalPasses());
+        List<FieldChange> changes = changedFixtureTeamStatFields(stat, request, passAccuracy);
         stat.updateStats(
                 request.getShotsOnGoal(),
                 request.getShotsOffGoal(),
@@ -410,11 +610,59 @@ public class AdminService {
                 request.getGoalkeeperSaves(),
                 request.getTotalPasses(),
                 request.getPassesAccurate(),
-                calculatePassAccuracy(request.getPassesAccurate(), request.getTotalPasses()),
+                passAccuracy,
                 request.getExpectedGoals()
         );
+        if (!changes.isEmpty()) {
+            adminOverrideService.markOverrides(
+                    AdminOverrideTargetType.FIXTURE_TEAM_STAT,
+                    stat.getId(),
+                    fieldNames(changes)
+            );
+        }
+        entityManager.flush();
         evictFixtureCaches(fixtureId);
-        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture team stats updated: team=" + teamId, List.of());
+        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture team stats updated: team=" + teamId, changes);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureTeamStatOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long teamId,
+            Long version
+    ) {
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        FixtureStat stat = fixtureStatRepository.findByFixtureFixtureIdAndTeamTeamId(fixtureId, teamId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
+        long deletedCount = adminOverrideService.clearOverrides(
+                AdminOverrideTargetType.FIXTURE_TEAM_STAT, stat.getId());
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_TEAM_STAT", stat.getId(), "ALL", deletedCount);
+        evictFixtureCaches(fixtureId);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixtureTeamStatOverride(
+            Long adminUserId,
+            Long fixtureId,
+            Long teamId,
+            String fieldName,
+            Long version
+    ) {
+        validateOverrideField(FIXTURE_TEAM_STAT_OVERRIDE_FIELDS, fieldName);
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        FixtureStat stat = fixtureStatRepository.findByFixtureFixtureIdAndTeamTeamId(fixtureId, teamId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
+        long deletedCount = adminOverrideService.clearOverride(
+                AdminOverrideTargetType.FIXTURE_TEAM_STAT, stat.getId(), fieldName);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_TEAM_STAT", stat.getId(), fieldName, deletedCount);
+        evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
     }
 
@@ -426,8 +674,12 @@ public class AdminService {
             AdminDto.FixturePlayerStatUpdateRequest request
     ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
+        validateFinishedFixture(fixture);
         PlayerFixtureStat stat = playerFixtureStatRepository.findByFixtureFixtureIdAndPlayerPlayerId(fixtureId, playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        validateAdminEditVersion(request.getVersion(), stat.getVersion());
+        Integer passAccuracy = calculatePassAccuracy(request.getPassesAccurate(), request.getPassesTotal());
+        List<FieldChange> changes = changedFixturePlayerStatFields(stat, request, passAccuracy);
         stat.updateLiveStat(
                 request.getMinutesPlayed(),
                 request.getRating(),
@@ -442,7 +694,7 @@ public class AdminService {
                 request.getPassesTotal(),
                 request.getPassesKey(),
                 request.getPassesAccurate(),
-                calculatePassAccuracy(request.getPassesAccurate(), request.getPassesTotal()),
+                passAccuracy,
                 request.getTacklesTotal(),
                 request.getBlocks(),
                 request.getInterceptions(),
@@ -462,8 +714,58 @@ public class AdminService {
                 request.getPenaltyMissed(),
                 request.getPenaltySaved()
         );
+        if (!changes.isEmpty()) {
+            adminOverrideService.markOverrides(
+                    AdminOverrideTargetType.FIXTURE_PLAYER_STAT,
+                    stat.getId(),
+                    fieldNames(changes)
+            );
+        }
+        entityManager.flush();
         evictFixtureCaches(fixtureId);
-        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture player stats updated: player=" + playerId, List.of());
+        saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture player stats updated: player=" + playerId, changes);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixturePlayerStatOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long playerId,
+            Long version
+    ) {
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        PlayerFixtureStat stat = playerFixtureStatRepository
+                .findByFixtureFixtureIdAndPlayerPlayerId(fixtureId, playerId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
+        long deletedCount = adminOverrideService.clearOverrides(
+                AdminOverrideTargetType.FIXTURE_PLAYER_STAT, stat.getId());
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_PLAYER_STAT", stat.getId(), "ALL", deletedCount);
+        evictFixtureCaches(fixtureId);
+        return toFixtureDetailResponse(fixture);
+    }
+
+    @Transactional
+    public AdminDto.FixtureAdminDetailResponse clearFixturePlayerStatOverride(
+            Long adminUserId,
+            Long fixtureId,
+            Long playerId,
+            String fieldName,
+            Long version
+    ) {
+        validateOverrideField(FIXTURE_PLAYER_STAT_OVERRIDE_FIELDS, fieldName);
+        Fixture fixture = findFixtureWithTeams(fixtureId);
+        PlayerFixtureStat stat = playerFixtureStatRepository
+                .findByFixtureFixtureIdAndPlayerPlayerId(fixtureId, playerId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
+        long deletedCount = adminOverrideService.clearOverride(
+                AdminOverrideTargetType.FIXTURE_PLAYER_STAT, stat.getId(), fieldName);
+        entityManager.flush();
+        saveOverrideClearLog(adminUserId, "FIXTURE_PLAYER_STAT", stat.getId(), fieldName, deletedCount);
+        evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
     }
 
@@ -473,6 +775,8 @@ public class AdminService {
         validateRequiredAdminText(request.getName());
         Team team = teamRepository.findByTeamId(teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.TEAM_NOT_FOUND));
+        validateAdminEditVersion(request.getVersion(), team.getVersion());
+        entityManager.lock(team, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
         List<FieldChange> changes = changedTeamFields(team, request);
         List<String> changedFields = fieldNames(changes);
 
@@ -497,6 +801,7 @@ public class AdminService {
                 detailsOf(changes),
                 true
         ));
+        entityManager.flush();
         return toTeamResponse(team);
     }
 
@@ -506,6 +811,7 @@ public class AdminService {
         validateRequiredAdminText(request.getName());
         Player player = playerRepository.findByPlayerId(playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PLAYER_NOT_FOUND));
+        validateAdminEditVersion(request.getVersion(), player.getVersion());
         List<FieldChange> changes = changedPlayerFields(player, request);
         List<String> changedFields = fieldNames(changes);
 
@@ -537,43 +843,62 @@ public class AdminService {
                 detailsOf(changes),
                 true
         ));
+        entityManager.flush();
         return toPlayerResponse(player);
     }
 
     @Transactional
-    public AdminDto.TeamAdminResponse clearTeamOverride(Long adminUserId, Long teamId, String fieldName) {
+    public AdminDto.TeamAdminResponse clearTeamOverride(
+            Long adminUserId,
+            Long teamId,
+            String fieldName,
+            Long version
+    ) {
         validateOverrideField(TEAM_OVERRIDE_FIELDS, fieldName);
         Team team = teamRepository.findByTeamId(teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.TEAM_NOT_FOUND));
+        prepareOverrideClear(version, team.getVersion(), team);
         long deletedCount = adminOverrideService.clearOverride(AdminOverrideTargetType.TEAM, team.getTeamId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "TEAM", team.getTeamId(), fieldName, deletedCount);
         return toTeamResponse(team);
     }
 
     @Transactional
-    public AdminDto.TeamAdminResponse clearTeamOverrides(Long adminUserId, Long teamId) {
+    public AdminDto.TeamAdminResponse clearTeamOverrides(Long adminUserId, Long teamId, Long version) {
         Team team = teamRepository.findByTeamId(teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.TEAM_NOT_FOUND));
+        prepareOverrideClear(version, team.getVersion(), team);
         long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.TEAM, team.getTeamId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "TEAM", team.getTeamId(), "ALL", deletedCount);
         return toTeamResponse(team);
     }
 
     @Transactional
-    public AdminDto.PlayerAdminResponse clearPlayerOverride(Long adminUserId, Long playerId, String fieldName) {
+    public AdminDto.PlayerAdminResponse clearPlayerOverride(
+            Long adminUserId,
+            Long playerId,
+            String fieldName,
+            Long version
+    ) {
         validateOverrideField(PLAYER_OVERRIDE_FIELDS, fieldName);
         Player player = playerRepository.findByPlayerId(playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PLAYER_NOT_FOUND));
+        prepareOverrideClear(version, player.getVersion(), player);
         long deletedCount = adminOverrideService.clearOverride(AdminOverrideTargetType.PLAYER, player.getPlayerId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "PLAYER", player.getPlayerId(), fieldName, deletedCount);
         return toPlayerResponse(player);
     }
 
     @Transactional
-    public AdminDto.PlayerAdminResponse clearPlayerOverrides(Long adminUserId, Long playerId) {
+    public AdminDto.PlayerAdminResponse clearPlayerOverrides(Long adminUserId, Long playerId, Long version) {
         Player player = playerRepository.findByPlayerId(playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PLAYER_NOT_FOUND));
+        prepareOverrideClear(version, player.getVersion(), player);
         long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.PLAYER, player.getPlayerId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "PLAYER", player.getPlayerId(), "ALL", deletedCount);
         return toPlayerResponse(player);
     }
@@ -898,6 +1223,77 @@ public class AdminService {
         return changes;
     }
 
+    private List<FieldChange> changedFixtureTeamStatFields(
+            FixtureStat stat,
+            AdminDto.FixtureTeamStatUpdateRequest request,
+            Integer passAccuracy
+    ) {
+        List<FieldChange> changes = new ArrayList<>();
+        addIfChanged(changes, "shotsOnGoal", stat.getShotsOnGoal(), request.getShotsOnGoal());
+        addIfChanged(changes, "shotsOffGoal", stat.getShotsOffGoal(), request.getShotsOffGoal());
+        addIfChanged(changes, "totalShots", stat.getTotalShots(), request.getTotalShots());
+        addIfChanged(changes, "blockedShots", stat.getBlockedShots(), request.getBlockedShots());
+        addIfChanged(changes, "shotsInsideBox", stat.getShotsInsideBox(), request.getShotsInsideBox());
+        addIfChanged(changes, "shotsOutsideBox", stat.getShotsOutsideBox(), request.getShotsOutsideBox());
+        addIfChanged(changes, "fouls", stat.getFouls(), request.getFouls());
+        addIfChanged(changes, "cornerKicks", stat.getCornerKicks(), request.getCornerKicks());
+        addIfChanged(changes, "offsides", stat.getOffsides(), request.getOffsides());
+        addIfChanged(changes, "ballPossession", stat.getBallPossession(), request.getBallPossession());
+        addIfChanged(changes, "yellowCards", stat.getYellowCards(), request.getYellowCards());
+        addIfChanged(changes, "redCards", stat.getRedCards(), request.getRedCards());
+        addIfChanged(changes, "goalkeeperSaves", stat.getGoalkeeperSaves(), request.getGoalkeeperSaves());
+        addIfChanged(changes, "totalPasses", stat.getTotalPasses(), request.getTotalPasses());
+        addIfChanged(changes, "passesAccurate", stat.getPassesAccurate(), request.getPassesAccurate());
+        addIfChanged(changes, "passAccuracy", stat.getPassAccuracy(), passAccuracy);
+        addIfChanged(changes, "expectedGoals", stat.getExpectedGoals(), request.getExpectedGoals());
+        return changes;
+    }
+
+    private List<FieldChange> changedFixturePlayerStatFields(
+            PlayerFixtureStat stat,
+            AdminDto.FixturePlayerStatUpdateRequest request,
+            Integer passAccuracy
+    ) {
+        Integer minutesPlayed = PlayerFixtureStat.normalizeMinutesPlayed(request.getMinutesPlayed());
+        Integer goals = PlayerFixtureStat.normalizeScoringStat(request.getMinutesPlayed(), request.getGoals());
+        Integer assists = PlayerFixtureStat.normalizeScoringStat(request.getMinutesPlayed(), request.getAssists());
+        Integer yellowCards = PlayerFixtureStat.normalizeYellowCards(request.getYellowCards(), request.getRedCards());
+        List<FieldChange> changes = new ArrayList<>();
+        addIfChanged(changes, "minutesPlayed", stat.getMinutesPlayed(), minutesPlayed);
+        addIfChanged(changes, "rating", stat.getRating(), request.getRating());
+        addIfChanged(changes, "captain", stat.getIsCaptain(), request.getCaptain());
+        addIfChanged(changes, "substitute", stat.getIsSubstitute(), request.getSubstitute());
+        addIfChanged(changes, "goals", stat.getGoals(), goals);
+        addIfChanged(changes, "assists", stat.getAssists(), assists);
+        addIfChanged(changes, "conceded", stat.getConceded(), request.getConceded());
+        addIfChanged(changes, "saves", stat.getSaves(), request.getSaves());
+        addIfChanged(changes, "shotsTotal", stat.getShotsTotal(), request.getShotsTotal());
+        addIfChanged(changes, "shotsOnTarget", stat.getShotsOnTarget(), request.getShotsOnTarget());
+        addIfChanged(changes, "passesTotal", stat.getPassesTotal(), request.getPassesTotal());
+        addIfChanged(changes, "passesKey", stat.getPassesKey(), request.getPassesKey());
+        addIfChanged(changes, "passesAccurate", stat.getPassesAccurate(), request.getPassesAccurate());
+        addIfChanged(changes, "passAccuracy", stat.getPassAccuracy(), passAccuracy);
+        addIfChanged(changes, "tacklesTotal", stat.getTacklesTotal(), request.getTacklesTotal());
+        addIfChanged(changes, "blocks", stat.getBlocks(), request.getBlocks());
+        addIfChanged(changes, "interceptions", stat.getInterceptions(), request.getInterceptions());
+        addIfChanged(changes, "duelsTotal", stat.getDuelsTotal(), request.getDuelsTotal());
+        addIfChanged(changes, "duelsWon", stat.getDuelsWon(), request.getDuelsWon());
+        addIfChanged(changes, "dribblesAttempts", stat.getDribblesAttempts(), request.getDribblesAttempts());
+        addIfChanged(changes, "dribblesSuccess", stat.getDribblesSuccess(), request.getDribblesSuccess());
+        addIfChanged(changes, "dribblesPast", stat.getDribblesPast(), request.getDribblesPast());
+        addIfChanged(changes, "foulsDrawn", stat.getFoulsDrawn(), request.getFoulsDrawn());
+        addIfChanged(changes, "foulsCommitted", stat.getFoulsCommitted(), request.getFoulsCommitted());
+        addIfChanged(changes, "yellowCards", stat.getYellowCards(), yellowCards);
+        addIfChanged(changes, "redCards", stat.getRedCards(), request.getRedCards());
+        addIfChanged(changes, "offsides", stat.getOffsides(), request.getOffsides());
+        addIfChanged(changes, "penaltyWon", stat.getPenaltyWon(), request.getPenaltyWon());
+        addIfChanged(changes, "penaltyCommitted", stat.getPenaltyCommitted(), request.getPenaltyCommitted());
+        addIfChanged(changes, "penaltyScored", stat.getPenaltyScored(), request.getPenaltyScored());
+        addIfChanged(changes, "penaltyMissed", stat.getPenaltyMissed(), request.getPenaltyMissed());
+        addIfChanged(changes, "penaltySaved", stat.getPenaltySaved(), request.getPenaltySaved());
+        return changes;
+    }
+
     private void addIfChanged(List<FieldChange> changes, String fieldName, Object currentValue, Object requestValue) {
         if (!Objects.equals(currentValue, requestValue)) {
             changes.add(new FieldChange(fieldName, currentValue, requestValue));
@@ -954,6 +1350,17 @@ public class AdminService {
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
     }
 
+    private Fixture findFixtureForEventUpdate(Long fixtureId) {
+        return fixtureRepository.findByFixtureIdForEventUpdate(fixtureId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+    }
+
+    private FixtureLineup findFixtureLineup(Long fixtureId, Long teamId, Long playerId) {
+        return fixtureLineupRepository
+                .findByFixtureFixtureIdAndTeamTeamIdAndPlayerPlayerId(fixtureId, teamId, playerId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+    }
+
     private Team findTeamOrNull(Long teamId) {
         if (teamId == null) {
             return null;
@@ -981,6 +1388,33 @@ public class AdminService {
         if (value == null) {
             throw new CustomException(ErrorCode.INVALID_ADMIN_EDIT_FIELD);
         }
+    }
+
+    private void validateFinishedFixture(Fixture fixture) {
+        if (!fixture.isFinished()) {
+            throw new CustomException(ErrorCode.ADMIN_FIXTURE_NOT_FINISHED);
+        }
+    }
+
+    private void validateAdminEditVersion(Long requestedVersion, long currentVersion) {
+        if (requestedVersion == null || requestedVersion != currentVersion) {
+            throw new CustomException(ErrorCode.ADMIN_EDIT_CONFLICT);
+        }
+    }
+
+    private void prepareOverrideClear(Long requestedVersion, long currentVersion, Object target) {
+        validateAdminEditVersion(requestedVersion, currentVersion);
+        entityManager.lock(target, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+    }
+
+    private void prepareEventOverrideClear(Long requestedVersion, Fixture fixture) {
+        validateAdminEditVersion(requestedVersion, fixture.getVersion());
+        entityManager.lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+    }
+
+    private void incrementEventAggregateVersion(Fixture fixture) {
+        entityManager.lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+        entityManager.flush();
     }
 
     private void validateEventTypeAndDetail(String eventType, String eventDetail) {
@@ -1093,6 +1527,19 @@ public class AdminService {
         return changes;
     }
 
+    private List<FieldChange> changedFixtureLineupFields(
+            FixtureLineup lineup,
+            AdminDto.FixtureLineupUpdateRequest request,
+            Integer jerseyNumber
+    ) {
+        List<FieldChange> changes = new ArrayList<>();
+        addIfChanged(changes, "jerseyNumber", lineup.getJerseyNumber(), jerseyNumber);
+        addIfChanged(changes, "position", lineup.getPosition(), request.getPosition());
+        addIfChanged(changes, "grid", lineup.getGrid(), request.getGrid());
+        addIfChanged(changes, "starter", lineup.isStarter(), Boolean.TRUE.equals(request.getStarter()));
+        return changes;
+    }
+
     private Integer calculatePassAccuracy(Integer passesAccurate, Integer totalPasses) {
         if (passesAccurate == null || totalPasses == null || totalPasses <= 0) {
             return null;
@@ -1109,6 +1556,7 @@ public class AdminService {
         Venue venue = team.getVenue();
         return AdminDto.TeamAdminResponse.builder()
                 .teamId(team.getTeamId())
+                .version(team.getVersion())
                 .name(team.getName())
                 .koreanName(team.getKoreanName())
                 .code(team.getCode())
@@ -1134,6 +1582,7 @@ public class AdminService {
     private AdminDto.PlayerAdminResponse toPlayerResponse(Player player) {
         return AdminDto.PlayerAdminResponse.builder()
                 .playerId(player.getPlayerId())
+                .version(player.getVersion())
                 .name(player.getName())
                 .koreanName(player.getKoreanName())
                 .firstname(player.getFirstname())
@@ -1180,6 +1629,7 @@ public class AdminService {
         Long fixtureId = fixture.getFixtureId();
         return AdminDto.FixtureAdminDetailResponse.builder()
                 .fixture(toFixtureResponse(fixture))
+                .eventOverrides(toOverrideResponses(AdminOverrideTargetType.FIXTURE_EVENT, fixtureId))
                 .events(fixtureEventRepository.findAllByFixtureFixtureIdOrderByMatchTimeAsc(fixtureId)
                         .stream()
                         .map(this::toFixtureEventResponse)
@@ -1202,6 +1652,7 @@ public class AdminService {
     private AdminDto.FixtureAdminResponse toFixtureResponse(Fixture fixture) {
         return AdminDto.FixtureAdminResponse.builder()
                 .fixtureId(fixture.getFixtureId())
+                .version(fixture.getVersion())
                 .fixtureDate(utcToKoreaOffsetDateTime(fixture.getFixtureDate()))
                 .referee(fixture.getReferee())
                 .timezone(fixture.getTimezone())
@@ -1252,6 +1703,7 @@ public class AdminService {
                 .awayGoalkeeperColorPrimary(fixture.getAwayGoalkeeperColorPrimary())
                 .awayGoalkeeperColorNumber(fixture.getAwayGoalkeeperColorNumber())
                 .awayGoalkeeperColorBorder(fixture.getAwayGoalkeeperColorBorder())
+                .manualOverrides(toOverrideResponses(AdminOverrideTargetType.FIXTURE, fixture.getFixtureId()))
                 .build();
     }
 
@@ -1277,6 +1729,8 @@ public class AdminService {
 
     private AdminDto.FixtureLineupAdminResponse toFixtureLineupResponse(FixtureLineup lineup) {
         return AdminDto.FixtureLineupAdminResponse.builder()
+                .lineupId(lineup.getId())
+                .version(lineup.getVersion())
                 .teamId(lineup.getTeam().getTeamId())
                 .teamName(lineup.getTeam().getName())
                 .teamNameKo(lineup.getTeam().getKoreanName())
@@ -1287,12 +1741,14 @@ public class AdminService {
                 .position(lineup.getPosition())
                 .grid(lineup.getGrid())
                 .starter(lineup.isStarter())
+                .manualOverrides(toOverrideResponses(AdminOverrideTargetType.FIXTURE_LINEUP, lineup.getId()))
                 .build();
     }
 
     private AdminDto.FixtureTeamStatAdminResponse toFixtureTeamStatResponse(FixtureStat stat) {
         return AdminDto.FixtureTeamStatAdminResponse.builder()
                 .teamId(stat.getTeam().getTeamId())
+                .version(stat.getVersion())
                 .teamName(stat.getTeam().getName())
                 .teamNameKo(stat.getTeam().getKoreanName())
                 .shotsOnGoal(stat.getShotsOnGoal())
@@ -1312,12 +1768,14 @@ public class AdminService {
                 .passesAccurate(stat.getPassesAccurate())
                 .passAccuracy(stat.getPassAccuracy())
                 .expectedGoals(stat.getExpectedGoals())
+                .manualOverrides(toOverrideResponses(AdminOverrideTargetType.FIXTURE_TEAM_STAT, stat.getId()))
                 .build();
     }
 
     private AdminDto.FixturePlayerStatAdminResponse toFixturePlayerStatResponse(PlayerFixtureStat stat) {
         return AdminDto.FixturePlayerStatAdminResponse.builder()
                 .playerId(stat.getPlayer().getPlayerId())
+                .version(stat.getVersion())
                 .playerName(stat.getPlayer().getName())
                 .playerNameKo(stat.getPlayer().getKoreanName())
                 .teamId(stat.getTeam().getTeamId())
@@ -1355,6 +1813,7 @@ public class AdminService {
                 .penaltyScored(stat.getPenaltyScored())
                 .penaltyMissed(stat.getPenaltyMissed())
                 .penaltySaved(stat.getPenaltySaved())
+                .manualOverrides(toOverrideResponses(AdminOverrideTargetType.FIXTURE_PLAYER_STAT, stat.getId()))
                 .build();
     }
 

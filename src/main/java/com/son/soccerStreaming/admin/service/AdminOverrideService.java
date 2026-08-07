@@ -41,6 +41,16 @@ public class AdminOverrideService {
     }
 
     @Transactional(readOnly = true)
+    public boolean isOverriddenForEventSync(
+            AdminOverrideTargetType targetType,
+            Long targetId,
+            String fieldName
+    ) {
+        return adminFieldOverrideRepository.existsByTargetTypeAndTargetIdAndFieldName(
+                targetType, targetId, fieldName);
+    }
+
+    @Transactional(readOnly = true)
     public List<OverrideInfo> overrideInfos(AdminOverrideTargetType targetType, Long targetId) {
         return adminFieldOverrideRepository
                 .findAllByTargetTypeAndTargetIdOrderByFieldNameAsc(targetType, targetId)

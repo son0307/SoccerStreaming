@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
@@ -80,6 +81,20 @@ class ApiFootballSyncFailureRetrySchedulerTest {
 
         assertThat(scheduler.retryDelay(1, failure)).isEqualTo(Duration.ofHours(2));
         assertThat(scheduler.retryDelay(1, new RuntimeException(failure))).isEqualTo(Duration.ofHours(2));
+    }
+
+    @Test
+    void doesNotScheduleDelayedRetryForOptimisticLockConflict() {
+        scheduler.schedule(
+                "teams:39:2025",
+                "teams:league=39; season=2025",
+                "team sync",
+                new ObjectOptimisticLockingFailureException("Team", 1L),
+                mock(Runnable.class)
+        );
+
+        verify(executor, never()).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        assertThat(scheduler.pendingRetryCount()).isZero();
     }
 
     @Test

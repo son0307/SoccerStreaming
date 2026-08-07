@@ -1,5 +1,7 @@
 package com.son.soccerStreaming.apifootball.service;
 
+import com.son.soccerStreaming.admin.entity.AdminOverrideTargetType;
+import com.son.soccerStreaming.admin.service.AdminOverrideService;
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballLiveDto;
 import com.son.soccerStreaming.fixture.dto.FixtureEventDto;
@@ -25,30 +27,50 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class ApiFootballFixtureEventSyncService {
 
+    private static final String FIXTURE_EVENTS_OVERRIDE_FIELD = "events";
+
     private final ApiFootballClient apiFootballClient;
     private final FixtureRepository fixtureRepository;
     private final FixtureEventRepository fixtureEventRepository;
     private final TeamRepository teamRepository;
     private final ApiFootballPlayerSyncService apiFootballPlayerSyncService;
+    private final AdminOverrideService adminOverrideService;
 
     @Transactional
     public FixtureEventDto syncEvents(Long fixtureId) {
-        Fixture fixture = fixtureRepository.findByFixtureId(fixtureId)
-                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
-
         List<ApiFootballLiveDto.EventResponse> events = apiFootballClient.getEvents(fixtureId);
-        return syncEvents(fixture, events);
+        return syncEventsWithFixtureLock(fixtureId, events);
     }
 
     @Transactional
     public FixtureEventDto syncEvents(Long fixtureId, List<ApiFootballLiveDto.EventResponse> events) {
-        Fixture fixture = fixtureRepository.findByFixtureId(fixtureId)
-                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
-        return syncEvents(fixture, events);
+        return syncEventsWithFixtureLock(fixtureId, events);
     }
 
     @Transactional
     public FixtureEventDto syncEvents(Fixture fixture, List<ApiFootballLiveDto.EventResponse> events) {
+        if (fixture == null || fixture.getFixtureId() == null) {
+            throw new CustomException(ErrorCode.FIXTURE_NOT_FOUND);
+        }
+        return syncEventsWithFixtureLock(fixture.getFixtureId(), events);
+    }
+
+    private FixtureEventDto syncEventsWithFixtureLock(
+            Long fixtureId,
+            List<ApiFootballLiveDto.EventResponse> events
+    ) {
+        Fixture fixture = fixtureRepository.findByFixtureIdForEventUpdate(fixtureId)
+                .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        boolean overridden = adminOverrideService.isOverriddenForEventSync(
+                AdminOverrideTargetType.FIXTURE_EVENT,
+                fixtureId,
+                FIXTURE_EVENTS_OVERRIDE_FIELD
+        );
+        if (overridden) {
+            log.debug("Fixture event sync skipped because admin override exists. fixtureId={}", fixtureId);
+            return null;
+        }
+
         FixtureEventDto latestEvent = null;
         int sequence = 1;
 

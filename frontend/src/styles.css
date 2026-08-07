@@ -4580,7 +4580,8 @@ h2 {
 .admin-pagination button,
 .admin-add-button,
 .admin-media-actions button,
-.admin-result-list button {
+.admin-result-list button,
+.admin-override-status button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4601,7 +4602,8 @@ h2 {
 .admin-pagination button:hover,
 .admin-add-button:hover,
 .admin-media-actions button:hover,
-.admin-result-list button:hover {
+.admin-result-list button:hover,
+.admin-override-status button:hover {
   border-color: #77a878;
   background: #edf6ed;
 }
@@ -4612,7 +4614,8 @@ h2 {
 .admin-pagination button:disabled,
 .admin-add-button:disabled,
 .admin-media-actions button:disabled,
-.admin-result-list button:disabled {
+.admin-result-list button:disabled,
+.admin-override-status button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
@@ -4889,6 +4892,102 @@ h2 {
   font-size: 1rem;
 }
 
+.admin-override-status {
+  border: 1px solid #e6c768;
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: #fff9df;
+  color: #684f08;
+}
+
+.admin-override-status > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-override-status > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-override-status > summary::after {
+  content: "펼치기";
+  color: #806d35;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.admin-override-status[open] > summary::after {
+  content: "접기";
+}
+
+.admin-override-status > summary > span {
+  margin-left: auto;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.admin-override-status-body {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.admin-override-status-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-override-status-heading button,
+.admin-override-status li button {
+  border-color: #c79b22;
+  background: #fffaf0;
+  color: #684f08;
+}
+
+.admin-override-status button:hover:not(:disabled) {
+  border-color: #a87908;
+  background: #ffefb8;
+  color: #503b00;
+}
+
+.admin-override-status p {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.admin-override-status ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-override-status li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.78rem;
+}
+
+.admin-override-status time {
+  flex: 0 0 auto;
+  color: #806d35;
+}
+
+.admin-override-status li button {
+  padding: 0 12px;
+}
+
 .admin-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5016,6 +5115,18 @@ h2 {
 .nested-admin-item .admin-edit-form {
   border-top: 1px solid #edf1eb;
   padding: 12px;
+}
+
+.admin-edit-form > .admin-delete-button {
+  border-color: #d8a6a1;
+  background: #fff6f5;
+  color: #a32d24;
+}
+
+.admin-edit-form > .admin-delete-button:hover {
+  border-color: #b94a42;
+  background: #fce9e7;
+  color: #84251f;
 }
 
 .nested-admin-grid > .admin-edit-form {
@@ -5425,6 +5536,20 @@ h2 {
 }
 
 @media (max-width: 760px) {
+  .admin-override-status li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+
+  .admin-override-status time {
+    grid-column: 1;
+  }
+
+  .admin-override-status li button {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
   .app-shell {
     padding: 20px 14px 32px;
   }

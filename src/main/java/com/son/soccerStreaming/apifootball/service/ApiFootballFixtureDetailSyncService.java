@@ -14,7 +14,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StopWatch;
 
 import java.util.ArrayList;
@@ -35,19 +34,21 @@ public class ApiFootballFixtureDetailSyncService {
     private final PlayerTeamSeasonStatAggregationService playerTeamSeasonStatAggregationService;
     private final ApplicationEventPublisher eventPublisher;
     private final FixtureRepository fixtureRepository;
-    private final TransactionTemplate transactionTemplate;
+    private final OptimisticLockRetryExecutor optimisticLockRetryExecutor;
     private final EntityManager entityManager;
     private final ApiFootballSyncStatusService apiFootballSyncStatusService;
 
     @Value("${api-football.sync.fixture-details.chunk-size:10}")
     private int chunkSize;
 
-    @Transactional
     public FixtureDetailSyncResult syncFixtureDetail(Long fixtureId, boolean applyLiveStandingImpact) {
         apiFootballSyncStatusService.recordAttempt("fixture-detail", "Fixture Detail");
         FixtureDetailSyncResult result = apiFootballClient.getFixture(fixtureId).stream()
                 .findFirst()
-                .map(response -> syncFixtureDetail(response, applyLiveStandingImpact))
+                .map(response -> optimisticLockRetryExecutor.execute(
+                        "fixture-detail:fixture=%s".formatted(fixtureId),
+                        () -> syncFixtureDetail(response, applyLiveStandingImpact, true)
+                ))
                 .orElseGet(() -> FixtureDetailSyncResult.empty(fixtureId));
         if (result.fixtureId() != null) {
             apiFootballSyncStatusService.recordSuccess("fixture-detail", "Fixture Detail");
@@ -160,19 +161,23 @@ public class ApiFootballFixtureDetailSyncService {
                 chunkWatch.stop();
 
                 chunkWatch.start("upsert");
-                List<FixtureDetailSyncResult> chunkResults = transactionTemplate.execute(status -> {
-                    List<FixtureDetailSyncResult> processed = new ArrayList<>();
-                    for (ApiFootballLiveDto.FixtureResponse response : responses) {
-                        FixtureDetailSyncResult result = syncFixtureDetail(response, applyLiveStandingImpact, false);
-                        if (result.fixtureId() != null) {
-                            processed.add(result);
+                List<FixtureDetailSyncResult> chunkResults = optimisticLockRetryExecutor.execute(
+                        "fixture-detail:fixtures=%s".formatted(chunk),
+                        () -> {
+                            List<FixtureDetailSyncResult> processed = new ArrayList<>();
+                            for (ApiFootballLiveDto.FixtureResponse response : responses) {
+                                FixtureDetailSyncResult result = syncFixtureDetail(
+                                        response, applyLiveStandingImpact, false);
+                                if (result.fixtureId() != null) {
+                                    processed.add(result);
+                                }
+                            }
+                            // Admin-triggered bulk sync runs in a web request, so clear managed entities per chunk.
+                            entityManager.flush();
+                            entityManager.clear();
+                            return processed;
                         }
-                    }
-                    // Admin-triggered bulk sync runs in a web request, so clear managed entities per chunk.
-                    entityManager.flush();
-                    entityManager.clear();
-                    return processed;
-                });
+                );
                 results.addAll(chunkResults);
                 processedUnits += chunk.size();
                 successfulUnits += chunkResults.size();

@@ -11,7 +11,6 @@ import com.son.soccerStreaming.admin.service.AdminOverrideService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Set;
@@ -26,15 +25,26 @@ public class ApiFootballTeamSyncService {
     private final AdminOverrideService adminOverrideService;
     private final ApiFootballSyncStatusService apiFootballSyncStatusService;
     private final ImageCacheService imageCacheService;
+    private final OptimisticLockRetryExecutor optimisticLockRetryExecutor;
     private static final List<String> OVERRIDE_FIELDS = List.of(
             "name", "code", "country", "founded", "logoUrl",
             "venueId", "venueName", "venueAddress", "venueCity", "capacity", "surface", "venueImageUrl"
     );
 
-    @Transactional
     public int syncTeams(Integer league, Integer season) {
         apiFootballSyncStatusService.recordAttempt("teams", "Teams", season);
         List<ApiFootballTeamDto.TeamResponse> responses = apiFootballClient.getTeams(league, season);
+        int syncedCount = optimisticLockRetryExecutor.execute(
+                "teams:league=%s;season=%s".formatted(league, season),
+                () -> persistTeams(responses)
+        );
+
+        log.info("API-Football team sync completed. league={}, season={}, count={}", league, season, syncedCount);
+        apiFootballSyncStatusService.recordSuccess("teams", "Teams", season);
+        return syncedCount;
+    }
+
+    private int persistTeams(List<ApiFootballTeamDto.TeamResponse> responses) {
         int syncedCount = 0;
 
         for (ApiFootballTeamDto.TeamResponse response : responses) {
@@ -73,9 +83,6 @@ public class ApiFootballTeamSyncService {
             imageCacheService.requestVenueImageCache(savedTeam.getVenue());
             syncedCount++;
         }
-
-        log.info("API-Football team sync completed. league={}, season={}, count={}", league, season, syncedCount);
-        apiFootballSyncStatusService.recordSuccess("teams", "Teams", season);
         return syncedCount;
     }
 
