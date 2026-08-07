@@ -3,6 +3,8 @@ package com.son.soccerStreaming.global.exception;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.persistence.OptimisticLockException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -38,6 +40,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         logHttpException(status, error, e);
 
         return errorResponse(status, error, message);
+    }
+
+    @ExceptionHandler({OptimisticLockingFailureException.class, OptimisticLockException.class})
+    public ResponseEntity<ErrorResponse> handleOptimisticLockException(Exception e) {
+        logHttpException(
+                ErrorCode.ADMIN_EDIT_CONFLICT.getStatus(),
+                ErrorCode.ADMIN_EDIT_CONFLICT.name(),
+                e
+        );
+        return errorResponse(
+                ErrorCode.ADMIN_EDIT_CONFLICT.getStatus(),
+                ErrorCode.ADMIN_EDIT_CONFLICT.name(),
+                ErrorCode.ADMIN_EDIT_CONFLICT.getMessage()
+        );
     }
 
     @ExceptionHandler(Exception.class)

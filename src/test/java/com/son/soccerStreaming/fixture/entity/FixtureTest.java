@@ -31,6 +31,21 @@ class FixtureTest {
     }
 
     @Test
+    void recognizesFinishedFixtureFromCanonicalOrApiStatus() {
+        assertThat(Fixture.builder().fixtureStatus("FINISHED").build().isFinished()).isTrue();
+        assertThat(Fixture.builder().statusShort("FT").build().isFinished()).isTrue();
+        assertThat(Fixture.builder().statusShort("AET").build().isFinished()).isTrue();
+        assertThat(Fixture.builder().statusShort("PEN").build().isFinished()).isTrue();
+    }
+
+    @Test
+    void rejectsNonFinishedFixtureStatus() {
+        assertThat(Fixture.builder().fixtureStatus("SCHEDULED").statusShort("NS").build().isFinished()).isFalse();
+        assertThat(Fixture.builder().fixtureStatus("LIVE").statusShort("2H").build().isFinished()).isFalse();
+        assertThat(Fixture.builder().build().isFinished()).isFalse();
+    }
+
+    @Test
     void normalizesVenueKoreanName() {
         Fixture fixture = Fixture.builder()
                 .fixtureId(1L)

@@ -17,6 +17,10 @@ public class Player {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     @Column(nullable = false, unique = true)
     private Long playerId;
 

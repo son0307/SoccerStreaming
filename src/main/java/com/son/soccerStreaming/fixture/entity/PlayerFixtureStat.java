@@ -23,6 +23,10 @@ public class PlayerFixtureStat {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     // 💡 연관관계 설정
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fixture_id", nullable = false, foreignKey = @ForeignKey(ConstraintMode.NO_CONSTRAINT))
@@ -94,12 +98,33 @@ public class PlayerFixtureStat {
                                Integer penaltyWon, Integer penaltyCommitted, Integer penaltyScored,
                                Integer penaltyMissed, Integer penaltySaved) {
         boolean appeared = hasAppearance(minutesPlayed);
-        this.minutesPlayed = normalizeMinutesPlayed(minutesPlayed);
+        updateStatValues(
+                normalizeMinutesPlayed(minutesPlayed), rating, isCaptain, isSubstitute,
+                normalizeScoringStat(appeared, goals), normalizeScoringStat(appeared, assists), conceded, saves,
+                shotsTotal, shotsOnTarget, passesTotal, passesKey, passesAccurate, passAccuracy,
+                tacklesTotal, blocks, interceptions, duelsTotal, duelsWon,
+                dribblesAttempts, dribblesSuccess, dribblesPast, foulsDrawn, foulsCommitted,
+                normalizeYellowCards(yellowCards, redCards), redCards, offsides,
+                penaltyWon, penaltyCommitted, penaltyScored, penaltyMissed, penaltySaved
+        );
+    }
+
+    public void updateStatValues(Integer minutesPlayed, Double rating, Boolean isCaptain, Boolean isSubstitute,
+                                 Integer goals, Integer assists, Integer conceded, Integer saves,
+                                 Integer shotsTotal, Integer shotsOnTarget, Integer passesTotal,
+                                 Integer passesKey, Integer passesAccurate, Integer passAccuracy, Integer tacklesTotal,
+                                 Integer blocks, Integer interceptions, Integer duelsTotal,
+                                 Integer duelsWon, Integer dribblesAttempts, Integer dribblesSuccess,
+                                 Integer dribblesPast, Integer foulsDrawn, Integer foulsCommitted,
+                                 Integer yellowCards, Integer redCards, Integer offsides,
+                                 Integer penaltyWon, Integer penaltyCommitted, Integer penaltyScored,
+                                 Integer penaltyMissed, Integer penaltySaved) {
+        this.minutesPlayed = minutesPlayed;
         this.rating = rating;
         this.isCaptain = isCaptain;
         this.isSubstitute = isSubstitute;
-        this.goals = normalizeScoringStat(appeared, goals);
-        this.assists = normalizeScoringStat(appeared, assists);
+        this.goals = goals;
+        this.assists = assists;
         this.conceded = conceded;
         this.saves = saves;
         this.shotsTotal = shotsTotal;
@@ -118,8 +143,8 @@ public class PlayerFixtureStat {
         this.dribblesPast = dribblesPast;
         this.foulsDrawn = foulsDrawn;
         this.foulsCommitted = foulsCommitted;
+        this.yellowCards = yellowCards;
         this.redCards = redCards;
-        this.yellowCards = normalizeYellowCards(yellowCards, redCards);
         this.offsides = offsides;
         this.penaltyWon = penaltyWon;
         this.penaltyCommitted = penaltyCommitted;

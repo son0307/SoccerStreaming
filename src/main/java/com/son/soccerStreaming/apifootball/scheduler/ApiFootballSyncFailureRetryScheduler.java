@@ -1,6 +1,7 @@
 package com.son.soccerStreaming.apifootball.scheduler;
 
 import com.son.soccerStreaming.apifootball.service.ApiFootballInjuryReferenceSyncException;
+import com.son.soccerStreaming.apifootball.service.OptimisticLockRetryExecutor;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncStatusService;
 import com.son.soccerStreaming.global.externalapi.ExternalApiException;
@@ -169,6 +170,9 @@ public class ApiFootballSyncFailureRetryScheduler {
      * 예외 체인에서 외부 API 예외를 찾아 지연 재시도가 가능한지 판단한다.
      */
     public boolean shouldRetry(Exception exception) {
+        if (OptimisticLockRetryExecutor.isOptimisticLockConflict(exception)) {
+            return false;
+        }
         return externalApiException(exception)
                 .map(ExternalApiException::isRetryable)
                 .orElse(true);

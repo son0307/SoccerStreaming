@@ -48,6 +48,8 @@ public enum ErrorCode {
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "예기치 못한 서버 오류가 발생했습니다."),
 
     // 409 CONFLICT
+    ADMIN_EDIT_CONFLICT(HttpStatus.CONFLICT, "다른 요청이 먼저 정보를 수정했습니다. 최신 정보를 다시 불러온 후 수정해 주세요."),
+    ADMIN_FIXTURE_NOT_FINISHED(HttpStatus.CONFLICT, "종료된 경기의 이벤트와 경기 스탯만 수정할 수 있습니다."),
     ADMIN_SYNC_ALREADY_RUNNING(HttpStatus.CONFLICT, "동일한 동기화 작업이 이미 대기 중이거나 실행 중입니다."),
     EMAIL_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 가입된 이메일입니다.");
 

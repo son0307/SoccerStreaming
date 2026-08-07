@@ -16,6 +16,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class TeamUpdateRequest {
+        private Long version;
         private String name;
         private String koreanName;
         private String code;
@@ -50,6 +51,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class PlayerUpdateRequest {
+        private Long version;
         private String name;
         private String koreanName;
         private String firstname;
@@ -82,6 +84,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class FixtureUpdateRequest {
+        private Long version;
         private OffsetDateTime fixtureDate;
         private String referee;
         private String timezone;
@@ -179,6 +182,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class FixtureLineupUpdateRequest {
+        private Long version;
         private Integer jerseyNumber;
         private String position;
         private String grid;
@@ -198,6 +202,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class FixtureTeamStatUpdateRequest {
+        private Long version;
         private Integer shotsOnGoal;
         private Integer shotsOffGoal;
         private Integer totalShots;
@@ -221,6 +226,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class FixturePlayerStatUpdateRequest {
+        private Long version;
         private Integer minutesPlayed;
         private Double rating;
         private Boolean captain;
@@ -259,6 +265,7 @@ public class AdminDto {
     @Builder
     public static class TeamAdminResponse {
         private Long teamId;
+        private long version;
         private String name;
         private String koreanName;
         private String code;
@@ -284,6 +291,7 @@ public class AdminDto {
     @Builder
     public static class PlayerAdminResponse {
         private Long playerId;
+        private long version;
         private String name;
         private String koreanName;
         private String firstname;
@@ -333,6 +341,7 @@ public class AdminDto {
     @Builder
     public static class FixtureAdminDetailResponse {
         private FixtureAdminResponse fixture;
+        private List<ManualOverrideResponse> eventOverrides;
         private List<FixtureEventAdminResponse> events;
         private List<FixtureLineupAdminResponse> lineups;
         private List<FixtureTeamStatAdminResponse> teamStats;
@@ -343,6 +352,7 @@ public class AdminDto {
     @Builder
     public static class FixtureAdminResponse {
         private Long fixtureId;
+        private long version;
         private OffsetDateTime fixtureDate;
         private String referee;
         private String timezone;
@@ -393,6 +403,7 @@ public class AdminDto {
         private String awayGoalkeeperColorPrimary;
         private String awayGoalkeeperColorNumber;
         private String awayGoalkeeperColorBorder;
+        private List<ManualOverrideResponse> manualOverrides;
     }
 
     @Getter
@@ -418,6 +429,8 @@ public class AdminDto {
     @Getter
     @Builder
     public static class FixtureLineupAdminResponse {
+        private Long lineupId;
+        private long version;
         private Long teamId;
         private String teamName;
         private String teamNameKo;
@@ -428,12 +441,14 @@ public class AdminDto {
         private String position;
         private String grid;
         private boolean starter;
+        private List<ManualOverrideResponse> manualOverrides;
     }
 
     @Getter
     @Builder
     public static class FixtureTeamStatAdminResponse {
         private Long teamId;
+        private long version;
         private String teamName;
         private String teamNameKo;
         private Integer shotsOnGoal;
@@ -453,12 +468,14 @@ public class AdminDto {
         private Integer passesAccurate;
         private Integer passAccuracy;
         private Double expectedGoals;
+        private List<ManualOverrideResponse> manualOverrides;
     }
 
     @Getter
     @Builder
     public static class FixturePlayerStatAdminResponse {
         private Long playerId;
+        private long version;
         private String playerName;
         private String playerNameKo;
         private Long teamId;
@@ -496,6 +513,7 @@ public class AdminDto {
         private Integer penaltyScored;
         private Integer penaltyMissed;
         private Integer penaltySaved;
+        private List<ManualOverrideResponse> manualOverrides;
     }
 
     @Getter

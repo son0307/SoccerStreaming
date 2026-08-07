@@ -39,7 +39,7 @@ class SyncProgressReportingTest {
                 mock(ApiFootballClient.class), mock(FixtureLineupRepository.class), mock(PlayerRepository.class),
                 mock(PlayerTeamSeasonStatRepository.class), teamRepository, standingRepository,
                 mock(AdminOverrideService.class),
-                mock(TransactionTemplate.class), mock(EntityManager.class), mock(ApiFootballSyncStatusService.class),
+                mock(OptimisticLockRetryExecutor.class), mock(EntityManager.class), mock(ApiFootballSyncStatusService.class),
                 mock(ImageCacheService.class), mock(PlayerTeamSeasonStatAggregationService.class)
         );
 
@@ -80,7 +80,7 @@ class SyncProgressReportingTest {
         ApiFootballPlayerSyncService service = new ApiFootballPlayerSyncService(
                 mock(ApiFootballClient.class), mock(FixtureLineupRepository.class), mock(PlayerRepository.class),
                 mock(PlayerTeamSeasonStatRepository.class), teamRepository, standingRepository,
-                mock(AdminOverrideService.class), mock(TransactionTemplate.class), mock(EntityManager.class),
+                mock(AdminOverrideService.class), mock(OptimisticLockRetryExecutor.class), mock(EntityManager.class),
                 mock(ApiFootballSyncStatusService.class), mock(ImageCacheService.class),
                 mock(PlayerTeamSeasonStatAggregationService.class)
         );

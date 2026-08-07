@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -93,6 +94,20 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getError()).isEqualTo(HttpStatus.BAD_REQUEST.name());
         assertThat(response.getBody().getMessage()).isEqualTo("Invalid season.");
+        assertThat(lastLog().getLevel()).isEqualTo(Level.WARN);
+        assertThat(lastLog().getThrowableProxy()).isNull();
+    }
+
+    @Test
+    void mapsOptimisticLockFailureToConflict() {
+        ResponseEntity<GlobalExceptionHandler.ErrorResponse> response = handler.handleOptimisticLockException(
+                new ObjectOptimisticLockingFailureException("Team", 47L)
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getError()).isEqualTo(ErrorCode.ADMIN_EDIT_CONFLICT.name());
+        assertThat(response.getBody().getMessage()).isEqualTo(ErrorCode.ADMIN_EDIT_CONFLICT.getMessage());
         assertThat(lastLog().getLevel()).isEqualTo(Level.WARN);
         assertThat(lastLog().getThrowableProxy()).isNull();
     }

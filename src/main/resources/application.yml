@@ -103,6 +103,8 @@ media:
 
 api-football:
   sync:
+    optimistic-lock:
+      max-retries: ${API_FOOTBALL_SYNC_OPTIMISTIC_LOCK_MAX_RETRIES:2}
     failure-retry:
       enabled: ${API_FOOTBALL_SYNC_FAILURE_RETRY_ENABLED:true}
       max-attempts: ${API_FOOTBALL_SYNC_FAILURE_RETRY_MAX_ATTEMPTS:2}

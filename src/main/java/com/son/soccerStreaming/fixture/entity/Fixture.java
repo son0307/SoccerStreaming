@@ -6,6 +6,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,9 +26,14 @@ import java.util.regex.Pattern;
 public class Fixture {
 
     private static final Pattern ROUND_NUMBER_PATTERN = Pattern.compile("(\\d+)\\s*$");
+    private static final Set<String> FINISHED_STATUS_SHORTS = Set.of("FT", "AET", "PEN");
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Version
+    @Column(nullable = false)
+    private long version;
 
     // API 통신용 고유 경기 ID
     @Column(nullable = false, unique = true)
@@ -121,6 +128,11 @@ public class Fixture {
     private String awayGoalkeeperColorNumber;
     @Column(length = 20)
     private String awayGoalkeeperColorBorder;
+
+    public boolean isFinished() {
+        return "FINISHED".equalsIgnoreCase(fixtureStatus)
+                || (statusShort != null && FINISHED_STATUS_SHORTS.contains(statusShort.toUpperCase(Locale.ROOT)));
+    }
 
     public void updateFixtureState(String statusShort, String statusLong, String fixtureStatus,
                                  Integer elapsed, Integer homeScore, Integer awayScore) {

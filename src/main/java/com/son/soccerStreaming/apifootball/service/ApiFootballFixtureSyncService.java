@@ -2,6 +2,8 @@ package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballLiveDto;
+import com.son.soccerStreaming.admin.entity.AdminOverrideTargetType;
+import com.son.soccerStreaming.admin.service.AdminOverrideService;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.global.config.RedisCacheConfig;
 import com.son.soccerStreaming.team.entity.Team;
@@ -19,6 +21,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -30,6 +33,11 @@ public class ApiFootballFixtureSyncService {
     private final TeamRepository teamRepository;
     private final ApiFootballStandingLocalUpdateService apiFootballStandingLocalUpdateService;
     private final ApiFootballSyncStatusService apiFootballSyncStatusService;
+    private final AdminOverrideService adminOverrideService;
+    private final OptimisticLockRetryExecutor optimisticLockRetryExecutor;
+    private static final List<String> OVERRIDE_FIELDS = List.of(
+            "fixtureDate", "referee", "venueId", "venueName", "venueCity"
+    );
 
     @CacheEvict(
             cacheNames = {
@@ -38,10 +46,13 @@ public class ApiFootballFixtureSyncService {
             },
             allEntries = true
     )
-    @Transactional
     public int syncSeasonFixtures(Integer league, Integer season) {
         apiFootballSyncStatusService.recordAttempt("fixtures", "Fixtures", season);
-        int syncedCount = upsertFixtures(apiFootballClient.getFixtures(league, season), false);
+        List<ApiFootballLiveDto.FixtureResponse> responses = apiFootballClient.getFixtures(league, season);
+        int syncedCount = optimisticLockRetryExecutor.execute(
+                "fixtures:league=%s;season=%s".formatted(league, season),
+                () -> upsertFixtures(responses, false)
+        );
         apiFootballSyncStatusService.recordSuccess("fixtures", "Fixtures", season);
         return syncedCount;
     }
@@ -53,14 +64,16 @@ public class ApiFootballFixtureSyncService {
             },
             allEntries = true
     )
-    @Transactional
     public int syncLiveFixtures(Integer league, Integer season) {
         apiFootballSyncStatusService.recordAttempt("fixtures", "Fixtures", season);
         List<ApiFootballLiveDto.FixtureResponse> liveFixtures = apiFootballClient.getLiveFixtures(league).stream()
                 .filter(response -> matchesSeason(response, season))
                 .toList();
 
-        int syncedCount = upsertFixtures(liveFixtures, true);
+        int syncedCount = optimisticLockRetryExecutor.execute(
+                "live-fixtures:league=%s;season=%s".formatted(league, season),
+                () -> upsertFixtures(liveFixtures, true)
+        );
         apiFootballSyncStatusService.recordSuccess("fixtures", "Fixtures", season);
         return syncedCount;
     }
@@ -126,7 +139,12 @@ public class ApiFootballFixtureSyncService {
                         .fixtureDate(parseFixtureDate(fixtureInfo.getDate(), LocalDateTime.now(ZoneOffset.UTC)))
                         .build());
 
-        updateFixture(fixture, response);
+        Set<String> overrides = adminOverrideService.overriddenFields(
+                AdminOverrideTargetType.FIXTURE,
+                fixtureInfo.getId(),
+                OVERRIDE_FIELDS
+        );
+        updateFixture(fixture, response, overrides);
         return Optional.of(fixtureRepository.save(fixture));
     }
 
@@ -139,7 +157,11 @@ public class ApiFootballFixtureSyncService {
         return leagueInfo.getSeason() != null && leagueInfo.getSeason().equals(season);
     }
 
-    private void updateFixture(Fixture fixture, ApiFootballLiveDto.FixtureResponse response) {
+    private void updateFixture(
+            Fixture fixture,
+            ApiFootballLiveDto.FixtureResponse response,
+            Set<String> overrides
+    ) {
         ApiFootballLiveDto.FixtureInfo fixtureInfo = response.getFixture();
         ApiFootballLiveDto.LeagueInfo league = response.getLeague();
         ApiFootballLiveDto.Status status = fixtureInfo != null ? fixtureInfo.getStatus() : null;
@@ -153,15 +175,25 @@ public class ApiFootballFixtureSyncService {
         ApiFootballLiveDto.Periods periods = fixtureInfo != null ? fixtureInfo.getPeriods() : null;
         ApiFootballLiveDto.Venue venue = fixtureInfo != null ? fixtureInfo.getVenue() : null;
         fixture.updateFixtureMetadata(
-                parseFixtureDate(fixtureInfo != null ? fixtureInfo.getDate() : null, fixture.getFixtureDate()),
-                fixtureInfo != null ? fixtureInfo.getReferee() : fixture.getReferee(),
+                adminOverrideService.apiValueUnlessOverridden(
+                        overrides, "fixtureDate", fixture.getFixtureDate(),
+                        parseFixtureDate(fixtureInfo != null ? fixtureInfo.getDate() : null, fixture.getFixtureDate())),
+                adminOverrideService.apiValueUnlessOverridden(
+                        overrides, "referee", fixture.getReferee(),
+                        fixtureInfo != null ? fixtureInfo.getReferee() : fixture.getReferee()),
                 fixtureInfo != null ? fixtureInfo.getTimezone() : fixture.getTimezone(),
                 fixtureInfo != null ? fixtureInfo.getTimestamp() : fixture.getTimestamp(),
                 periods != null ? periods.getFirst() : fixture.getFirstPeriod(),
                 periods != null ? periods.getSecond() : fixture.getSecondPeriod(),
-                venue != null ? venue.getId() : fixture.getVenueId(),
-                venue != null ? venue.getName() : fixture.getVenueName(),
-                venue != null ? venue.getCity() : fixture.getVenueCity()
+                adminOverrideService.apiValueUnlessOverridden(
+                        overrides, "venueId", fixture.getVenueId(),
+                        venue != null ? venue.getId() : fixture.getVenueId()),
+                adminOverrideService.apiValueUnlessOverridden(
+                        overrides, "venueName", fixture.getVenueName(),
+                        venue != null ? venue.getName() : fixture.getVenueName()),
+                adminOverrideService.apiValueUnlessOverridden(
+                        overrides, "venueCity", fixture.getVenueCity(),
+                        venue != null ? venue.getCity() : fixture.getVenueCity())
         );
 
         fixture.updateFixtureState(

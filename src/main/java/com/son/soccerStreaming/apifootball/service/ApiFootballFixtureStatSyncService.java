@@ -2,6 +2,8 @@ package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballFixtureStatisticsDto;
+import com.son.soccerStreaming.admin.entity.AdminOverrideTargetType;
+import com.son.soccerStreaming.admin.service.AdminOverrideService;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.fixture.entity.FixtureStat;
 import com.son.soccerStreaming.team.entity.Team;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -32,6 +35,13 @@ public class ApiFootballFixtureStatSyncService {
     private final FixtureRepository fixtureRepository;
     private final FixtureStatRepository fixtureStatRepository;
     private final TeamRepository teamRepository;
+    private final AdminOverrideService adminOverrideService;
+    private static final List<String> OVERRIDE_FIELDS = List.of(
+            "shotsOnGoal", "shotsOffGoal", "totalShots", "blockedShots", "shotsInsideBox",
+            "shotsOutsideBox", "fouls", "cornerKicks", "offsides", "ballPossession",
+            "yellowCards", "redCards", "goalkeeperSaves", "totalPasses", "passesAccurate",
+            "passAccuracy", "expectedGoals"
+    );
 
     @Transactional
     @CacheEvict(
@@ -124,24 +134,30 @@ public class ApiFootballFixtureStatSyncService {
                         .team(team)
                         .build()));
 
+        Set<String> overrides = adminOverrideService.overriddenFields(
+                AdminOverrideTargetType.FIXTURE_TEAM_STAT,
+                entity.getId(),
+                OVERRIDE_FIELDS
+        );
+
         entity.updateStats(
-                parseInteger(values.get("shots on goal")),
-                parseInteger(values.get("shots off goal")),
-                parseInteger(values.get("total shots")),
-                parseInteger(values.get("blocked shots")),
-                parseInteger(values.get("shots insidebox")),
-                parseInteger(values.get("shots outsidebox")),
-                parseInteger(values.get("fouls")),
-                parseInteger(values.get("corner kicks")),
-                parseInteger(values.get("offsides")),
-                parseInteger(values.get("ball possession")),
-                parseInteger(values.get("yellow cards")),
-                parseInteger(values.get("red cards")),
-                parseInteger(values.get("goalkeeper saves")),
-                parseInteger(values.get("total passes")),
-                parseInteger(values.get("passes accurate")),
-                parseInteger(values.get("passes %")),
-                parseDouble(values.get("expected_goals"))
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsOnGoal", entity.getShotsOnGoal(), parseInteger(values.get("shots on goal"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsOffGoal", entity.getShotsOffGoal(), parseInteger(values.get("shots off goal"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "totalShots", entity.getTotalShots(), parseInteger(values.get("total shots"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "blockedShots", entity.getBlockedShots(), parseInteger(values.get("blocked shots"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsInsideBox", entity.getShotsInsideBox(), parseInteger(values.get("shots insidebox"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "shotsOutsideBox", entity.getShotsOutsideBox(), parseInteger(values.get("shots outsidebox"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "fouls", entity.getFouls(), parseInteger(values.get("fouls"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "cornerKicks", entity.getCornerKicks(), parseInteger(values.get("corner kicks"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "offsides", entity.getOffsides(), parseInteger(values.get("offsides"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "ballPossession", entity.getBallPossession(), parseInteger(values.get("ball possession"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "yellowCards", entity.getYellowCards(), parseInteger(values.get("yellow cards"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "redCards", entity.getRedCards(), parseInteger(values.get("red cards"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "goalkeeperSaves", entity.getGoalkeeperSaves(), parseInteger(values.get("goalkeeper saves"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "totalPasses", entity.getTotalPasses(), parseInteger(values.get("total passes"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "passesAccurate", entity.getPassesAccurate(), parseInteger(values.get("passes accurate"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "passAccuracy", entity.getPassAccuracy(), parseInteger(values.get("passes %"))),
+                adminOverrideService.apiValueUnlessOverridden(overrides, "expectedGoals", entity.getExpectedGoals(), parseDouble(values.get("expected_goals")))
         );
     }
 

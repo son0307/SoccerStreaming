@@ -44,6 +44,6 @@ src/main/generated
 
 /AGENTS.md
 /src/main/test/
-/docs/
+/docs
 /logs
 /deploy/observability/.env
