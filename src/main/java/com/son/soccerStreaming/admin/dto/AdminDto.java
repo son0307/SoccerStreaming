@@ -162,6 +162,7 @@ public class AdminDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class FixtureEventUpdateRequest {
+        private Long version;
         private Integer elapsed;
         private Integer extra;
         private Long teamId;

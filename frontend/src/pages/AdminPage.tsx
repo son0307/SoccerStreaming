@@ -1045,8 +1045,12 @@ export function AdminPage({ authState }: AdminPageProps) {
       return;
     }
     const teamId = selectedTeam.teamId;
+    const version = selectedTeam.version;
     await runToastSave(`team-overrides:${teamId}`, async () => {
-      const updated = await adminJson<TeamAdmin>(`/api/v1/admin/teams/${teamId}/overrides`, "DELETE");
+      const updated = await adminJson<TeamAdmin>(
+        `/api/v1/admin/teams/${teamId}/overrides?version=${version}`,
+        "DELETE",
+      );
       clearApiMemoryCache();
       setTeamSelection({ teamId, status: "ready", detail: updated });
       await reloadAuditLogs();
@@ -1061,8 +1065,12 @@ export function AdminPage({ authState }: AdminPageProps) {
       return;
     }
     const playerId = selectedPlayer.playerId;
+    const version = selectedPlayer.version;
     await runToastSave(`player-overrides:${playerId}`, async () => {
-      const updated = await adminJson<PlayerAdmin>(`/api/v1/admin/players/${playerId}/overrides`, "DELETE");
+      const updated = await adminJson<PlayerAdmin>(
+        `/api/v1/admin/players/${playerId}/overrides?version=${version}`,
+        "DELETE",
+      );
       clearApiMemoryCache();
       setPlayerSelection({ playerId, status: "ready", detail: updated });
       await reloadAuditLogs();
@@ -1078,9 +1086,10 @@ export function AdminPage({ authState }: AdminPageProps) {
       return;
     }
     const teamId = selectedTeam.teamId;
+    const version = selectedTeam.version;
     await runToastSave(`team-override:${teamId}:${fieldName}`, async () => {
       const updated = await adminJson<TeamAdmin>(
-        `/api/v1/admin/teams/${teamId}/overrides/${encodeURIComponent(fieldName)}`,
+        `/api/v1/admin/teams/${teamId}/overrides/${encodeURIComponent(fieldName)}?version=${version}`,
         "DELETE",
       );
       clearApiMemoryCache();
@@ -1098,9 +1107,10 @@ export function AdminPage({ authState }: AdminPageProps) {
       return;
     }
     const playerId = selectedPlayer.playerId;
+    const version = selectedPlayer.version;
     await runToastSave(`player-override:${playerId}:${fieldName}`, async () => {
       const updated = await adminJson<PlayerAdmin>(
-        `/api/v1/admin/players/${playerId}/overrides/${encodeURIComponent(fieldName)}`,
+        `/api/v1/admin/players/${playerId}/overrides/${encodeURIComponent(fieldName)}?version=${version}`,
         "DELETE",
       );
       clearApiMemoryCache();
@@ -2356,7 +2366,7 @@ function FixtureEditor({
     }
   }, [addingEvent, detail]);
 
-  function clearFixtureOverrides(url: string, label: string, fieldName?: string) {
+  function clearFixtureOverrides(url: string, label: string, version: number, fieldName?: string) {
     const targetLabel = fieldName ? fieldLabel(
       fieldName === "events"
         ? eventOverrideFields
@@ -2367,7 +2377,8 @@ function FixtureEditor({
     if (!window.confirm(`${scopeText}의 관리자 수정 상태를 초기화할까요? 다음 동기화부터 API 값이 다시 반영됩니다.`)) {
       return;
     }
-    const endpoint = fieldName ? `${url}/${encodeURIComponent(fieldName)}` : url;
+    const overrideUrl = fieldName ? `${url}/${encodeURIComponent(fieldName)}` : url;
+    const endpoint = `${overrideUrl}?version=${version}`;
     void onSavePayload(
       fixtureId,
       endpoint,
@@ -2384,7 +2395,7 @@ function FixtureEditor({
     }
     void onSavePayload(
       fixtureId,
-      `/api/v1/admin/fixtures/${fixtureId}/events/${event.eventSequence}`,
+      `/api/v1/admin/fixtures/${fixtureId}/events/${event.eventSequence}?version=${detail.fixture.version}`,
       {},
       `${eventLabel} 이벤트를 삭제했습니다.`,
       "DELETE",
@@ -2402,10 +2413,12 @@ function FixtureEditor({
           onClearOverrides={() => clearFixtureOverrides(
             `/api/v1/admin/fixtures/${fixtureId}/overrides`,
             "경기 기본 정보",
+            detail.fixture.version,
           )}
           onClearOverride={(fieldName) => clearFixtureOverrides(
             `/api/v1/admin/fixtures/${fixtureId}/overrides`,
             "경기 기본 정보",
+            detail.fixture.version,
             fieldName,
           )}
           submitLabel="경기 정보 저장"
@@ -2421,10 +2434,12 @@ function FixtureEditor({
           onClear={() => clearFixtureOverrides(
             `/api/v1/admin/fixtures/${fixtureId}/events/overrides`,
             "경기 이벤트",
+            detail.fixture.version,
           )}
           onClearField={(fieldName) => clearFixtureOverrides(
             `/api/v1/admin/fixtures/${fixtureId}/events/overrides`,
             "경기 이벤트",
+            detail.fixture.version,
             fieldName,
           )}
           disabled={disabled}
@@ -2444,7 +2459,7 @@ function FixtureEditor({
                 void onSavePayload(
                   fixtureId,
                   `/api/v1/admin/fixtures/${fixtureId}/events`,
-                  body,
+                  { ...body, version: detail.fixture.version },
                   "이벤트를 추가했습니다.",
                   "POST",
                 ).then(() => setAddingEvent(false));
@@ -2465,7 +2480,7 @@ function FixtureEditor({
                 void onSavePayload(
                   fixtureId,
                   `/api/v1/admin/fixtures/${fixtureId}/events/${event.eventSequence}`,
-                  body,
+                  { ...body, version: detail.fixture.version },
                   "이벤트를 저장했습니다.",
                 );
               }}
@@ -2487,10 +2502,12 @@ function FixtureEditor({
             onClearOverrides={() => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/lineups/${lineup.teamId}/${lineup.playerId}/overrides`,
               "라인업",
+              lineup.version,
             )}
             onClearOverride={(fieldName) => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/lineups/${lineup.teamId}/${lineup.playerId}/overrides`,
               "라인업",
+              lineup.version,
               fieldName,
             )}
             submitLabel="라인업 저장"
@@ -2524,10 +2541,12 @@ function FixtureEditor({
             onClearOverrides={() => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/team-stats/${stat.teamId}/overrides`,
               `${stat.teamName ?? "팀"} 경기 스탯`,
+              stat.version,
             )}
             onClearOverride={(fieldName) => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/team-stats/${stat.teamId}/overrides`,
               `${stat.teamName ?? "팀"} 경기 스탯`,
+              stat.version,
               fieldName,
             )}
             submitLabel="팀 통계 저장"
@@ -2561,10 +2580,12 @@ function FixtureEditor({
             onClearOverrides={() => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/player-stats/${stat.playerId}/overrides`,
               `${adminName(stat.playerNameKo, stat.playerName)} 경기 스탯`,
+              stat.version,
             )}
             onClearOverride={(fieldName) => clearFixtureOverrides(
               `/api/v1/admin/fixtures/${fixtureId}/player-stats/${stat.playerId}/overrides`,
               `${adminName(stat.playerNameKo, stat.playerName)} 경기 스탯`,
+              stat.version,
               fieldName,
             )}
             submitLabel="선수 통계 저장"

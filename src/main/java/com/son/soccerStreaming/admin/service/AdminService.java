@@ -330,9 +330,15 @@ public class AdminService {
     }
 
     @Transactional
-    public AdminDto.FixtureAdminDetailResponse clearFixtureOverrides(Long adminUserId, Long fixtureId) {
+    public AdminDto.FixtureAdminDetailResponse clearFixtureOverrides(
+            Long adminUserId,
+            Long fixtureId,
+            Long version
+    ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
+        prepareOverrideClear(version, fixture.getVersion(), fixture);
         long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.FIXTURE, fixtureId);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE", fixtureId, "ALL", deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -342,12 +348,15 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse clearFixtureOverride(
             Long adminUserId,
             Long fixtureId,
-            String fieldName
+            String fieldName,
+            Long version
     ) {
         validateOverrideField(FIXTURE_OVERRIDE_FIELDS, fieldName);
         Fixture fixture = findFixtureWithTeams(fixtureId);
+        prepareOverrideClear(version, fixture.getVersion(), fixture);
         long deletedCount = adminOverrideService.clearOverride(
                 AdminOverrideTargetType.FIXTURE, fixtureId, fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE", fixtureId, fieldName, deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -363,6 +372,7 @@ public class AdminService {
         request.normalizeTextFields();
         Fixture fixture = findFixtureForEventUpdate(fixtureId);
         validateFinishedFixture(fixture);
+        validateAdminEditVersion(request.getVersion(), fixture.getVersion());
         FixtureEvent event = fixtureEventRepository.findByFixtureFixtureIdAndEventSequence(fixtureId, eventSequence)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
         validateFixtureEventRequest(fixture, request);
@@ -382,6 +392,7 @@ public class AdminService {
                 fixtureId,
                 List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
         );
+        incrementEventAggregateVersion(fixture);
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event updated: sequence=" + eventSequence, List.of());
         return toFixtureDetailResponse(fixture);
@@ -396,6 +407,7 @@ public class AdminService {
         request.normalizeTextFields();
         Fixture fixture = findFixtureForEventUpdate(fixtureId);
         validateFinishedFixture(fixture);
+        validateAdminEditVersion(request.getVersion(), fixture.getVersion());
         validateFixtureEventRequest(fixture, request);
         String eventType = normalizeEventType(request.getEventType());
         Integer maxSequence = fixtureEventRepository.findMaxEventSequenceByFixtureId(fixtureId);
@@ -418,6 +430,7 @@ public class AdminService {
                 fixtureId,
                 List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
         );
+        incrementEventAggregateVersion(fixture);
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event created: sequence=" + nextSequence, List.of());
         return toFixtureDetailResponse(fixture);
@@ -427,10 +440,12 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse deleteFixtureEvent(
             Long adminUserId,
             Long fixtureId,
-            Integer eventSequence
+            Integer eventSequence,
+            Long version
     ) {
         Fixture fixture = findFixtureForEventUpdate(fixtureId);
         validateFinishedFixture(fixture);
+        validateAdminEditVersion(version, fixture.getVersion());
         FixtureEvent event = fixtureEventRepository.findByFixtureFixtureIdAndEventSequence(fixtureId, eventSequence)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
         fixtureEventRepository.delete(event);
@@ -439,6 +454,7 @@ public class AdminService {
                 fixtureId,
                 List.of(FIXTURE_EVENTS_OVERRIDE_FIELD)
         );
+        incrementEventAggregateVersion(fixture);
         evictFixtureCaches(fixtureId);
         saveFixtureUpdateLog(adminUserId, fixtureId, "Fixture event deleted: sequence=" + eventSequence, List.of());
         return toFixtureDetailResponse(fixture);
@@ -447,11 +463,14 @@ public class AdminService {
     @Transactional
     public AdminDto.FixtureAdminDetailResponse clearFixtureEventOverrides(
             Long adminUserId,
-            Long fixtureId
+            Long fixtureId,
+            Long version
     ) {
         Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        prepareEventOverrideClear(version, fixture);
         long deletedCount = adminOverrideService.clearOverrides(
                 AdminOverrideTargetType.FIXTURE_EVENT, fixtureId);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_EVENT", fixtureId, "ALL", deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -461,12 +480,15 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse clearFixtureEventOverride(
             Long adminUserId,
             Long fixtureId,
-            String fieldName
+            String fieldName,
+            Long version
     ) {
         validateOverrideField(FIXTURE_EVENT_OVERRIDE_FIELDS, fieldName);
         Fixture fixture = findFixtureForEventUpdate(fixtureId);
+        prepareEventOverrideClear(version, fixture);
         long deletedCount = adminOverrideService.clearOverride(
                 AdminOverrideTargetType.FIXTURE_EVENT, fixtureId, fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_EVENT", fixtureId, fieldName, deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -517,12 +539,15 @@ public class AdminService {
             Long adminUserId,
             Long fixtureId,
             Long teamId,
-            Long playerId
+            Long playerId,
+            Long version
     ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
         FixtureLineup lineup = findFixtureLineup(fixtureId, teamId, playerId);
+        prepareOverrideClear(version, lineup.getVersion(), lineup);
         long deletedCount = adminOverrideService.clearOverrides(
                 AdminOverrideTargetType.FIXTURE_LINEUP, lineup.getId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_LINEUP", lineup.getId(), "ALL", deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -534,13 +559,16 @@ public class AdminService {
             Long fixtureId,
             Long teamId,
             Long playerId,
-            String fieldName
+            String fieldName,
+            Long version
     ) {
         validateOverrideField(FIXTURE_LINEUP_OVERRIDE_FIELDS, fieldName);
         Fixture fixture = findFixtureWithTeams(fixtureId);
         FixtureLineup lineup = findFixtureLineup(fixtureId, teamId, playerId);
+        prepareOverrideClear(version, lineup.getVersion(), lineup);
         long deletedCount = adminOverrideService.clearOverride(
                 AdminOverrideTargetType.FIXTURE_LINEUP, lineup.getId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_LINEUP", lineup.getId(), fieldName, deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -602,13 +630,16 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse clearFixtureTeamStatOverrides(
             Long adminUserId,
             Long fixtureId,
-            Long teamId
+            Long teamId,
+            Long version
     ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
         FixtureStat stat = fixtureStatRepository.findByFixtureFixtureIdAndTeamTeamId(fixtureId, teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
         long deletedCount = adminOverrideService.clearOverrides(
                 AdminOverrideTargetType.FIXTURE_TEAM_STAT, stat.getId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_TEAM_STAT", stat.getId(), "ALL", deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -619,14 +650,17 @@ public class AdminService {
             Long adminUserId,
             Long fixtureId,
             Long teamId,
-            String fieldName
+            String fieldName,
+            Long version
     ) {
         validateOverrideField(FIXTURE_TEAM_STAT_OVERRIDE_FIELDS, fieldName);
         Fixture fixture = findFixtureWithTeams(fixtureId);
         FixtureStat stat = fixtureStatRepository.findByFixtureFixtureIdAndTeamTeamId(fixtureId, teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
         long deletedCount = adminOverrideService.clearOverride(
                 AdminOverrideTargetType.FIXTURE_TEAM_STAT, stat.getId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_TEAM_STAT", stat.getId(), fieldName, deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -697,14 +731,17 @@ public class AdminService {
     public AdminDto.FixtureAdminDetailResponse clearFixturePlayerStatOverrides(
             Long adminUserId,
             Long fixtureId,
-            Long playerId
+            Long playerId,
+            Long version
     ) {
         Fixture fixture = findFixtureWithTeams(fixtureId);
         PlayerFixtureStat stat = playerFixtureStatRepository
                 .findByFixtureFixtureIdAndPlayerPlayerId(fixtureId, playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
         long deletedCount = adminOverrideService.clearOverrides(
                 AdminOverrideTargetType.FIXTURE_PLAYER_STAT, stat.getId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_PLAYER_STAT", stat.getId(), "ALL", deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -715,15 +752,18 @@ public class AdminService {
             Long adminUserId,
             Long fixtureId,
             Long playerId,
-            String fieldName
+            String fieldName,
+            Long version
     ) {
         validateOverrideField(FIXTURE_PLAYER_STAT_OVERRIDE_FIELDS, fieldName);
         Fixture fixture = findFixtureWithTeams(fixtureId);
         PlayerFixtureStat stat = playerFixtureStatRepository
                 .findByFixtureFixtureIdAndPlayerPlayerId(fixtureId, playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.FIXTURE_NOT_FOUND));
+        prepareOverrideClear(version, stat.getVersion(), stat);
         long deletedCount = adminOverrideService.clearOverride(
                 AdminOverrideTargetType.FIXTURE_PLAYER_STAT, stat.getId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "FIXTURE_PLAYER_STAT", stat.getId(), fieldName, deletedCount);
         evictFixtureCaches(fixtureId);
         return toFixtureDetailResponse(fixture);
@@ -808,39 +848,57 @@ public class AdminService {
     }
 
     @Transactional
-    public AdminDto.TeamAdminResponse clearTeamOverride(Long adminUserId, Long teamId, String fieldName) {
+    public AdminDto.TeamAdminResponse clearTeamOverride(
+            Long adminUserId,
+            Long teamId,
+            String fieldName,
+            Long version
+    ) {
         validateOverrideField(TEAM_OVERRIDE_FIELDS, fieldName);
         Team team = teamRepository.findByTeamId(teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.TEAM_NOT_FOUND));
+        prepareOverrideClear(version, team.getVersion(), team);
         long deletedCount = adminOverrideService.clearOverride(AdminOverrideTargetType.TEAM, team.getTeamId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "TEAM", team.getTeamId(), fieldName, deletedCount);
         return toTeamResponse(team);
     }
 
     @Transactional
-    public AdminDto.TeamAdminResponse clearTeamOverrides(Long adminUserId, Long teamId) {
+    public AdminDto.TeamAdminResponse clearTeamOverrides(Long adminUserId, Long teamId, Long version) {
         Team team = teamRepository.findByTeamId(teamId)
                 .orElseThrow(() -> new CustomException(ErrorCode.TEAM_NOT_FOUND));
+        prepareOverrideClear(version, team.getVersion(), team);
         long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.TEAM, team.getTeamId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "TEAM", team.getTeamId(), "ALL", deletedCount);
         return toTeamResponse(team);
     }
 
     @Transactional
-    public AdminDto.PlayerAdminResponse clearPlayerOverride(Long adminUserId, Long playerId, String fieldName) {
+    public AdminDto.PlayerAdminResponse clearPlayerOverride(
+            Long adminUserId,
+            Long playerId,
+            String fieldName,
+            Long version
+    ) {
         validateOverrideField(PLAYER_OVERRIDE_FIELDS, fieldName);
         Player player = playerRepository.findByPlayerId(playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PLAYER_NOT_FOUND));
+        prepareOverrideClear(version, player.getVersion(), player);
         long deletedCount = adminOverrideService.clearOverride(AdminOverrideTargetType.PLAYER, player.getPlayerId(), fieldName);
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "PLAYER", player.getPlayerId(), fieldName, deletedCount);
         return toPlayerResponse(player);
     }
 
     @Transactional
-    public AdminDto.PlayerAdminResponse clearPlayerOverrides(Long adminUserId, Long playerId) {
+    public AdminDto.PlayerAdminResponse clearPlayerOverrides(Long adminUserId, Long playerId, Long version) {
         Player player = playerRepository.findByPlayerId(playerId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PLAYER_NOT_FOUND));
+        prepareOverrideClear(version, player.getVersion(), player);
         long deletedCount = adminOverrideService.clearOverrides(AdminOverrideTargetType.PLAYER, player.getPlayerId());
+        entityManager.flush();
         saveOverrideClearLog(adminUserId, "PLAYER", player.getPlayerId(), "ALL", deletedCount);
         return toPlayerResponse(player);
     }
@@ -1342,6 +1400,21 @@ public class AdminService {
         if (requestedVersion == null || requestedVersion != currentVersion) {
             throw new CustomException(ErrorCode.ADMIN_EDIT_CONFLICT);
         }
+    }
+
+    private void prepareOverrideClear(Long requestedVersion, long currentVersion, Object target) {
+        validateAdminEditVersion(requestedVersion, currentVersion);
+        entityManager.lock(target, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+    }
+
+    private void prepareEventOverrideClear(Long requestedVersion, Fixture fixture) {
+        validateAdminEditVersion(requestedVersion, fixture.getVersion());
+        entityManager.lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+    }
+
+    private void incrementEventAggregateVersion(Fixture fixture) {
+        entityManager.lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+        entityManager.flush();
     }
 
     private void validateEventTypeAndDetail(String eventType, String eventDetail) {

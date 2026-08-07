@@ -465,9 +465,11 @@ class AdminServiceTest {
         when(adminOverrideService.clearOverride(AdminOverrideTargetType.TEAM, 47L, "name")).thenReturn(1L);
         when(adminOverrideService.overrideInfos(AdminOverrideTargetType.TEAM, 47L)).thenReturn(List.of());
 
-        AdminDto.TeamAdminResponse response = adminService.clearTeamOverride(1L, 47L, "name");
+        AdminDto.TeamAdminResponse response = adminService.clearTeamOverride(1L, 47L, "name", 0L);
 
         assertThat(response.getManualOverrides()).isEmpty();
+        verify(entityManager).lock(team, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        verify(entityManager).flush();
         verify(adminOverrideService).clearOverride(AdminOverrideTargetType.TEAM, 47L, "name");
         ArgumentCaptor<AdminAuditLog> logCaptor = ArgumentCaptor.forClass(AdminAuditLog.class);
         verify(adminAuditLogRepository).save(logCaptor.capture());
@@ -488,13 +490,30 @@ class AdminServiceTest {
         when(adminOverrideService.clearOverrides(AdminOverrideTargetType.TEAM, 47L)).thenReturn(3L);
         when(adminOverrideService.overrideInfos(AdminOverrideTargetType.TEAM, 47L)).thenReturn(List.of());
 
-        AdminDto.TeamAdminResponse response = adminService.clearTeamOverrides(1L, 47L);
+        AdminDto.TeamAdminResponse response = adminService.clearTeamOverrides(1L, 47L, 0L);
 
         assertThat(response.getManualOverrides()).isEmpty();
         verify(adminOverrideService).clearOverrides(AdminOverrideTargetType.TEAM, 47L);
         ArgumentCaptor<AdminAuditLog> logCaptor = ArgumentCaptor.forClass(AdminAuditLog.class);
         verify(adminAuditLogRepository).save(logCaptor.capture());
         assertThat(logCaptor.getValue().getDetails()).isEqualTo("field=ALL; deletedCount=3");
+    }
+
+    @Test
+    void clearTeamOverrideRejectsStaleVersionBeforeDeletingOverride() {
+        Team team = Team.builder()
+                .teamId(47L)
+                .version(3L)
+                .name("Current Team")
+                .build();
+        when(teamRepository.findByTeamId(47L)).thenReturn(Optional.of(team));
+
+        assertThatThrownBy(() -> adminService.clearTeamOverride(1L, 47L, "name", 2L))
+                .isInstanceOfSatisfying(CustomException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_EDIT_CONFLICT));
+
+        verifyNoInteractions(adminOverrideService, entityManager);
     }
 
     @Test
@@ -510,7 +529,7 @@ class AdminServiceTest {
         when(adminOverrideService.clearOverride(AdminOverrideTargetType.PLAYER, 10L, "photoUrl")).thenReturn(1L);
         when(adminOverrideService.overrideInfos(AdminOverrideTargetType.PLAYER, 10L)).thenReturn(List.of());
 
-        AdminDto.PlayerAdminResponse response = adminService.clearPlayerOverride(1L, 10L, "photoUrl");
+        AdminDto.PlayerAdminResponse response = adminService.clearPlayerOverride(1L, 10L, "photoUrl", 0L);
 
         assertThat(response.getManualOverrides()).isEmpty();
         verify(adminOverrideService).clearOverride(AdminOverrideTargetType.PLAYER, 10L, "photoUrl");
@@ -533,7 +552,7 @@ class AdminServiceTest {
         when(adminOverrideService.clearOverrides(AdminOverrideTargetType.PLAYER, 10L)).thenReturn(2L);
         when(adminOverrideService.overrideInfos(AdminOverrideTargetType.PLAYER, 10L)).thenReturn(List.of());
 
-        AdminDto.PlayerAdminResponse response = adminService.clearPlayerOverrides(1L, 10L);
+        AdminDto.PlayerAdminResponse response = adminService.clearPlayerOverrides(1L, 10L, 0L);
 
         assertThat(response.getManualOverrides()).isEmpty();
         verify(adminOverrideService).clearOverrides(AdminOverrideTargetType.PLAYER, 10L);
@@ -544,7 +563,7 @@ class AdminServiceTest {
 
     @Test
     void clearOverrideRejectsUnknownFieldName() {
-        assertThatThrownBy(() -> adminService.clearTeamOverride(1L, 47L, "unknown"))
+        assertThatThrownBy(() -> adminService.clearTeamOverride(1L, 47L, "unknown", 0L))
                 .isInstanceOf(CustomException.class);
     }
 
@@ -661,7 +680,7 @@ class AdminServiceTest {
                 1L, 1000L, new AdminDto.FixtureEventUpdateRequest()));
         assertNotFinished(() -> adminService.updateFixtureEvent(
                 1L, 1000L, 1, new AdminDto.FixtureEventUpdateRequest()));
-        assertNotFinished(() -> adminService.deleteFixtureEvent(1L, 1000L, 1));
+        assertNotFinished(() -> adminService.deleteFixtureEvent(1L, 1000L, 1, 0L));
         assertNotFinished(() -> adminService.updateFixtureTeamStat(
                 1L, 1000L, 42L, new AdminDto.FixtureTeamStatUpdateRequest()));
         assertNotFinished(() -> adminService.updateFixturePlayerStat(
@@ -687,7 +706,7 @@ class AdminServiceTest {
                 .fixtureStatus("FINISHED")
                 .build();
         AdminDto.FixtureEventUpdateRequest request = new AdminDto.FixtureEventUpdateRequest(
-                10, null, null, null, null, "Goal", "Normal Goal", null);
+                0L, 10, null, null, null, null, "Goal", "Normal Goal", null);
         when(fixtureRepository.findByFixtureIdForEventUpdate(1000L)).thenReturn(Optional.of(fixture));
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(adminUser()));
         when(adminOverrideService.overrideInfos(AdminOverrideTargetType.FIXTURE_EVENT, 1000L))
@@ -708,6 +727,8 @@ class AdminServiceTest {
                 1000L,
                 List.of("events")
         );
+        verify(entityManager).lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+        verify(entityManager).flush();
         assertThat(response.getEventOverrides()).singleElement().satisfies(override -> {
             assertThat(override.getFieldName()).isEqualTo("events");
             assertThat(override.getUpdatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 7, 10, 30));
@@ -725,7 +746,7 @@ class AdminServiceTest {
                 .fixtureStatus("FINISHED")
                 .build();
         AdminDto.FixtureEventUpdateRequest request = new AdminDto.FixtureEventUpdateRequest(
-                10, null, null, null, null, "Goal", "Normal Goal", null);
+                0L, 10, null, null, null, null, "Goal", "Normal Goal", null);
         when(fixtureRepository.findByFixtureIdForEventUpdate(1000L)).thenReturn(Optional.of(fixture));
         when(fixtureEventRepository.findMaxEventSequenceByFixtureId(1000L)).thenReturn(3);
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(adminUser()));
@@ -759,7 +780,7 @@ class AdminServiceTest {
                 .thenReturn(Optional.of(event));
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(adminUser()));
 
-        AdminDto.FixtureAdminDetailResponse response = adminService.deleteFixtureEvent(1L, 1000L, 3);
+        AdminDto.FixtureAdminDetailResponse response = adminService.deleteFixtureEvent(1L, 1000L, 3, 0L);
 
         verify(fixtureRepository).findByFixtureIdForEventUpdate(1000L);
         verify(fixtureEventRepository).delete(event);
@@ -770,6 +791,45 @@ class AdminServiceTest {
         );
         verify(fixtureRedisService).evictFixtureCaches(1000L);
         assertThat(response.getEvents()).isEmpty();
+    }
+
+    @Test
+    void clearFixtureEventOverrideRejectsStaleFixtureVersionWhileHoldingFixtureLock() {
+        Fixture fixture = Fixture.builder()
+                .fixtureId(1000L)
+                .version(4L)
+                .fixtureStatus("FINISHED")
+                .build();
+        when(fixtureRepository.findByFixtureIdForEventUpdate(1000L)).thenReturn(Optional.of(fixture));
+
+        assertThatThrownBy(() -> adminService.clearFixtureEventOverride(
+                1L, 1000L, "events", 3L))
+                .isInstanceOfSatisfying(CustomException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_EDIT_CONFLICT));
+
+        verify(fixtureRepository).findByFixtureIdForEventUpdate(1000L);
+        verifyNoInteractions(adminOverrideService, entityManager);
+    }
+
+    @Test
+    void updateFixtureEventRejectsStaleFixtureVersionAfterAcquiringFixtureLock() {
+        Fixture fixture = Fixture.builder()
+                .fixtureId(1000L)
+                .version(4L)
+                .fixtureStatus("FINISHED")
+                .build();
+        AdminDto.FixtureEventUpdateRequest request = new AdminDto.FixtureEventUpdateRequest();
+        ReflectionTestUtils.setField(request, "version", 3L);
+        when(fixtureRepository.findByFixtureIdForEventUpdate(1000L)).thenReturn(Optional.of(fixture));
+
+        assertThatThrownBy(() -> adminService.updateFixtureEvent(1L, 1000L, 1, request))
+                .isInstanceOfSatisfying(CustomException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_EDIT_CONFLICT));
+
+        verify(fixtureRepository).findByFixtureIdForEventUpdate(1000L);
+        verifyNoInteractions(fixtureEventRepository, adminOverrideService, entityManager);
     }
 
     @Test
@@ -802,12 +862,12 @@ class AdminServiceTest {
                 .thenReturn(Optional.of(playerStat));
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(adminUser()));
 
-        adminService.clearFixtureEventOverrides(1L, 1000L);
-        adminService.clearFixtureTeamStatOverrides(1L, 1000L, 42L);
-        adminService.clearFixturePlayerStatOverrides(1L, 1000L, 10L);
-        adminService.clearFixtureEventOverride(1L, 1000L, "events");
-        adminService.clearFixtureTeamStatOverride(1L, 1000L, 42L, "totalShots");
-        adminService.clearFixturePlayerStatOverride(1L, 1000L, 10L, "rating");
+        adminService.clearFixtureEventOverrides(1L, 1000L, 0L);
+        adminService.clearFixtureTeamStatOverrides(1L, 1000L, 42L, 0L);
+        adminService.clearFixturePlayerStatOverrides(1L, 1000L, 10L, 0L);
+        adminService.clearFixtureEventOverride(1L, 1000L, "events", 0L);
+        adminService.clearFixtureTeamStatOverride(1L, 1000L, 42L, "totalShots", 0L);
+        adminService.clearFixturePlayerStatOverride(1L, 1000L, 10L, "rating", 0L);
 
         verify(adminOverrideService).clearOverrides(AdminOverrideTargetType.FIXTURE_EVENT, 1000L);
         verify(adminOverrideService).clearOverrides(AdminOverrideTargetType.FIXTURE_TEAM_STAT, 101L);
@@ -817,12 +877,16 @@ class AdminServiceTest {
                 AdminOverrideTargetType.FIXTURE_TEAM_STAT, 101L, "totalShots");
         verify(adminOverrideService).clearOverride(
                 AdminOverrideTargetType.FIXTURE_PLAYER_STAT, 201L, "rating");
+        verify(entityManager, times(2)).lock(fixture, LockModeType.PESSIMISTIC_FORCE_INCREMENT);
+        verify(entityManager, times(2)).lock(teamStat, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        verify(entityManager, times(2)).lock(playerStat, LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+        verify(entityManager, times(6)).flush();
     }
 
     @Test
     void rejectsUnknownFixtureStatOverrideFieldBeforeLoadingFixture() {
         assertThatThrownBy(() -> adminService.clearFixtureTeamStatOverride(
-                1L, 1000L, 42L, "unknown"))
+                1L, 1000L, 42L, "unknown", 0L))
                 .isInstanceOfSatisfying(CustomException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(ErrorCode.INVALID_ADMIN_OVERRIDE_FIELD));

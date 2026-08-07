@@ -2,11 +2,7 @@ package com.son.soccerStreaming.admin.repository;
 
 import com.son.soccerStreaming.admin.entity.AdminFieldOverride;
 import com.son.soccerStreaming.admin.entity.AdminOverrideTargetType;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -20,13 +16,10 @@ public interface AdminFieldOverrideRepository extends JpaRepository<AdminFieldOv
             String fieldName
     );
 
-    @Lock(LockModeType.PESSIMISTIC_READ)
-    @Query("SELECT o FROM AdminFieldOverride o "
-            + "WHERE o.targetType = :targetType AND o.targetId = :targetId AND o.fieldName = :fieldName")
-    Optional<AdminFieldOverride> findForEventSync(
-            @Param("targetType") AdminOverrideTargetType targetType,
-            @Param("targetId") Long targetId,
-            @Param("fieldName") String fieldName
+    boolean existsByTargetTypeAndTargetIdAndFieldName(
+            AdminOverrideTargetType targetType,
+            Long targetId,
+            String fieldName
     );
 
     List<AdminFieldOverride> findAllByTargetTypeAndTargetIdAndFieldNameIn(

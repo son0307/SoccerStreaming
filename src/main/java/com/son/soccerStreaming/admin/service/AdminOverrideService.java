@@ -46,7 +46,8 @@ public class AdminOverrideService {
             Long targetId,
             String fieldName
     ) {
-        return adminFieldOverrideRepository.findForEventSync(targetType, targetId, fieldName).isPresent();
+        return adminFieldOverrideRepository.existsByTargetTypeAndTargetIdAndFieldName(
+                targetType, targetId, fieldName);
     }
 
     @Transactional(readOnly = true)
