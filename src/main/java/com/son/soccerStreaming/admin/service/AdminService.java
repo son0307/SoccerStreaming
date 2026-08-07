@@ -398,13 +398,8 @@ public class AdminService {
         validateFinishedFixture(fixture);
         validateFixtureEventRequest(fixture, request);
         String eventType = normalizeEventType(request.getEventType());
-        Integer nextSequence = fixtureEventRepository.findAllByFixtureFixtureIdOrderByMatchTimeAsc(fixtureId)
-                .stream()
-                .map(FixtureEvent::getEventSequence)
-                .filter(Objects::nonNull)
-                .max(Integer::compareTo)
-                .map(sequence -> sequence + 1)
-                .orElse(1);
+        Integer maxSequence = fixtureEventRepository.findMaxEventSequenceByFixtureId(fixtureId);
+        Integer nextSequence = maxSequence == null ? 1 : maxSequence + 1;
         FixtureEvent event = FixtureEvent.builder()
                 .fixture(fixture)
                 .eventSequence(nextSequence)

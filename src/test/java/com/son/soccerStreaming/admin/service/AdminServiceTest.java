@@ -715,6 +715,29 @@ class AdminServiceTest {
     }
 
     @Test
+    void createsFixtureEventAfterHighestSequenceWhenEarlierEventWasDeleted() {
+        Team home = Team.builder().teamId(42L).name("Arsenal").build();
+        Team away = Team.builder().teamId(49L).name("Chelsea").build();
+        Fixture fixture = Fixture.builder()
+                .fixtureId(1000L)
+                .homeTeam(home)
+                .awayTeam(away)
+                .fixtureStatus("FINISHED")
+                .build();
+        AdminDto.FixtureEventUpdateRequest request = new AdminDto.FixtureEventUpdateRequest(
+                10, null, null, null, null, "Goal", "Normal Goal", null);
+        when(fixtureRepository.findByFixtureIdForEventUpdate(1000L)).thenReturn(Optional.of(fixture));
+        when(fixtureEventRepository.findMaxEventSequenceByFixtureId(1000L)).thenReturn(3);
+        when(appUserRepository.findById(1L)).thenReturn(Optional.of(adminUser()));
+
+        adminService.createFixtureEvent(1L, 1000L, request);
+
+        ArgumentCaptor<FixtureEvent> eventCaptor = ArgumentCaptor.forClass(FixtureEvent.class);
+        verify(fixtureEventRepository).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getEventSequence()).isEqualTo(4);
+    }
+
+    @Test
     void deletesFixtureEventAfterLockingFixtureAndMarksWholeEventCollectionOverridden() {
         Team home = Team.builder().teamId(42L).name("Arsenal").build();
         Team away = Team.builder().teamId(49L).name("Chelsea").build();

@@ -1159,9 +1159,12 @@ export function AdminPage({ authState }: AdminPageProps) {
       }
 
       applyAdminMediaResponse(completed);
-      await refreshVersionedMediaTarget(completed);
+      const refreshed = await refreshVersionedMediaTarget(completed);
       clearApiMemoryCache();
       await reloadAuditLogs();
+      return refreshed
+        ? null
+        : "이미지 변경은 완료됐지만 최신 버전 정보를 불러오지 못했습니다. 편집 대상을 다시 선택해주세요.";
     }, "관리자 이미지를 적용했습니다.");
   }
 
@@ -1172,9 +1175,12 @@ export function AdminPage({ authState }: AdminPageProps) {
         "DELETE",
       );
       applyAdminMediaResponse(restored);
-      await refreshVersionedMediaTarget(restored);
+      const refreshed = await refreshVersionedMediaTarget(restored);
       clearApiMemoryCache();
       await reloadAuditLogs();
+      return refreshed
+        ? null
+        : "이미지 복원은 완료됐지만 최신 버전 정보를 불러오지 못했습니다. 편집 대상을 다시 선택해주세요.";
     }, "관리자 이미지를 제거하고 원본 이미지로 복원했습니다.");
   }
 
@@ -1208,15 +1214,24 @@ export function AdminPage({ authState }: AdminPageProps) {
     });
   }
 
-  async function refreshVersionedMediaTarget(response: AdminMediaResponse) {
-    if (response.targetType === "PLAYER_PHOTO") {
-      const detail = await adminGet<PlayerAdmin>(`/api/v1/admin/players/${response.targetId}`);
-      setPlayerSelection({ playerId: response.targetId, status: "ready", detail });
-      return;
-    }
-    if (response.targetType === "TEAM_LOGO") {
-      const detail = await adminGet<TeamAdmin>(`/api/v1/admin/teams/${response.targetId}`);
-      setTeamSelection({ teamId: response.targetId, status: "ready", detail });
+  async function refreshVersionedMediaTarget(response: AdminMediaResponse): Promise<boolean> {
+    try {
+      if (response.targetType === "PLAYER_PHOTO") {
+        const detail = await adminGet<PlayerAdmin>(`/api/v1/admin/players/${response.targetId}`);
+        setPlayerSelection((current) => current.playerId === response.targetId
+          ? { playerId: response.targetId, status: "ready", detail }
+          : current);
+        return true;
+      }
+      if (response.targetType === "TEAM_LOGO") {
+        const detail = await adminGet<TeamAdmin>(`/api/v1/admin/teams/${response.targetId}`);
+        setTeamSelection((current) => current.teamId === response.targetId
+          ? { teamId: response.targetId, status: "ready", detail }
+          : current);
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -1289,7 +1304,11 @@ export function AdminPage({ authState }: AdminPageProps) {
     }
   }
 
-  async function runMediaSave(key: string, action: () => Promise<void>, successMessage: string): Promise<string | null> {
+  async function runMediaSave(
+    key: string,
+    action: () => Promise<string | null>,
+    successMessage: string,
+  ): Promise<string | null> {
     if (savingKey !== null) {
       const busyMessage = "다른 관리자 요청을 처리하고 있습니다. 잠시 후 다시 시도해주세요.";
       setMediaToast({ message: busyMessage, type: "error" });
@@ -1297,7 +1316,11 @@ export function AdminPage({ authState }: AdminPageProps) {
     }
     setSavingKey(key);
     try {
-      await action();
+      const outcomeMessage = await action();
+      if (outcomeMessage) {
+        setMediaToast({ message: outcomeMessage, type: "error" });
+        return outcomeMessage;
+      }
       setMediaToast({ message: successMessage, type: "success" });
       return null;
     } catch (nextError) {
