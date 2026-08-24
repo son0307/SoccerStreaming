@@ -166,6 +166,10 @@ public class FixtureService {
                 .penaltyHomeScore(fixture.getPenaltyHomeScore())
                 .penaltyAwayScore(fixture.getPenaltyAwayScore())
                 .fixtureStatus(fixture.getFixtureStatus())
+                .statusShort(fixture.getStatusShort())
+                .statusLong(fixture.getStatusLong())
+                .elapsed(fixture.getElapsed())
+                .extra(fixture.getExtra())
                 .build();
     }
 

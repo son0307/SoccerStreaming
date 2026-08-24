@@ -12,6 +12,10 @@ class SseServiceTest {
 
         sseService.subscribe(200L);
 
-        assertThat(sseService.getSubscribedFixtureIds()).containsExactly(200L);
+        assertThat(sseService.getTotalSubscriberCount()).isEqualTo(1);
+
+        sseService.sendHeartbeats();
+
+        assertThat(sseService.getTotalSubscriberCount()).isEqualTo(1);
     }
 }

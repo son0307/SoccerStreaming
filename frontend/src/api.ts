@@ -17,6 +17,31 @@ export type FixtureSummary = {
   homeScore: number | null;
   awayScore: number | null;
   fixtureStatus: string | null;
+  statusShort: string | null;
+  statusLong: string | null;
+  elapsed: number | null;
+  extra: number | null;
+};
+
+export type LiveFixtureSnapshot = {
+  fixtureId: number;
+  statusShort: string | null;
+  statusLong: string | null;
+  fixtureStatus: string | null;
+  elapsed: number | null;
+  extra: number | null;
+  homeWinner: boolean | null;
+  awayWinner: boolean | null;
+  halftimeHomeScore: number | null;
+  halftimeAwayScore: number | null;
+  fulltimeHomeScore: number | null;
+  fulltimeAwayScore: number | null;
+  extratimeHomeScore: number | null;
+  extratimeAwayScore: number | null;
+  penaltyHomeScore: number | null;
+  penaltyAwayScore: number | null;
+  homeTeamStat: FixtureTeamStat | null;
+  awayTeamStat: FixtureTeamStat | null;
 };
 
 export type FixtureMeta = {
@@ -752,12 +777,11 @@ export async function fetchFixtures(query: FixtureQuery): Promise<CursorResponse
 
 }
 
-export async function fetchFixture(fixtureId: number): Promise<FixtureSummary> {
-  return cachedGetJson<FixtureSummary>(
-    `/api/v1/fixtures/${fixtureId}`,
-    "경기 정보를 불러오지 못했습니다.",
-    DETAIL_CACHE_TTL_MS,
-  );
+export async function fetchFixture(fixtureId: number, options: { fresh?: boolean } = {}): Promise<FixtureSummary> {
+  const url = `/api/v1/fixtures/${fixtureId}`;
+  return options.fresh
+    ? fetchJson<FixtureSummary>(url, "경기 정보를 불러오지 못했습니다.")
+    : cachedGetJson<FixtureSummary>(url, "경기 정보를 불러오지 못했습니다.", DETAIL_CACHE_TTL_MS);
 
 }
 
@@ -794,12 +818,11 @@ export async function fetchFixtureLineups(fixtureId: number): Promise<FixtureLin
 
 }
 
-export async function fetchFixtureStats(fixtureId: number): Promise<FixtureStatResponse> {
-  return cachedGetJson<FixtureStatResponse>(
-    `/api/v1/fixtures/${fixtureId}/stats`,
-    "팀 통계를 불러오지 못했습니다.",
-    SHORT_CACHE_TTL_MS,
-  );
+export async function fetchFixtureStats(fixtureId: number, options: { fresh?: boolean } = {}): Promise<FixtureStatResponse> {
+  const url = `/api/v1/fixtures/${fixtureId}/stats`;
+  return options.fresh
+    ? fetchJson<FixtureStatResponse>(url, "팀 통계를 불러오지 못했습니다.")
+    : cachedGetJson<FixtureStatResponse>(url, "팀 통계를 불러오지 못했습니다.", SHORT_CACHE_TTL_MS);
 }
 
 export async function fetchFixturePlayerStats(fixtureId: number): Promise<FixturePlayerStatResponse> {

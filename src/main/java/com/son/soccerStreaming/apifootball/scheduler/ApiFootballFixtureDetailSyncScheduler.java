@@ -30,7 +30,7 @@ public class ApiFootballFixtureDetailSyncScheduler {
     @Value("${api-football.sync.fixtures.season:2025}")
     private Integer season;
 
-    @Scheduled(cron = "${api-football.sync.fixture-details.live-cron:0 * * * * *}")
+    @Scheduled(cron = "${api-football.sync.fixture-details.live-cron:15 * * * * *}")
     public void syncLiveFixtureDetails() {
         String syncKey = ApiFootballSyncExecutionGuard.key("fixture-details-live", "live");
         if (!executionGuard.executeIfAvailable(syncKey, () -> syncLiveFixtureDetailsSafely(syncKey))) {
@@ -73,10 +73,15 @@ public class ApiFootballFixtureDetailSyncScheduler {
             return false;
         }
 
-        apiFootballFixtureDetailSyncService.syncFixtureDetailsWithResults(
+        log.info("API-Football live fixture detail sync started. fixtureCount={}", liveFixtures.size());
+        List<ApiFootballFixtureDetailSyncService.FixtureDetailSyncResult> results =
+                apiFootballFixtureDetailSyncService.syncFixtureDetailsWithResults(
                 liveFixtures,
                 true
-        ).forEach(result -> liveFixtureBroadcastService.broadcastFixture(result.fixtureId(), result.latestEvent()));
+        );
+        results.forEach(result -> liveFixtureBroadcastService.broadcastFixture(result.fixtureId(), result.latestEvent()));
+        log.info("API-Football live fixture detail sync completed. fixtureCount={}, broadcastCount={}",
+                liveFixtures.size(), results.size());
         return true;
     }
 

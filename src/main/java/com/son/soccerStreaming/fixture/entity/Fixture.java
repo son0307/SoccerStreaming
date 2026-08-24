@@ -74,6 +74,7 @@ public class Fixture {
     private String statusShort;
     private String statusLong;
     private Integer elapsed;
+    private Integer extra;
 
     // 조회를 간단히 하기 위한 매크로 상태
     @Column(length = 20)
@@ -135,11 +136,12 @@ public class Fixture {
     }
 
     public void updateFixtureState(String statusShort, String statusLong, String fixtureStatus,
-                                 Integer elapsed, Integer homeScore, Integer awayScore) {
+                                 Integer elapsed, Integer extra, Integer homeScore, Integer awayScore) {
         this.statusShort = statusShort;
         this.statusLong = statusLong;
         this.fixtureStatus = fixtureStatus;
         this.elapsed = elapsed;
+        this.extra = extra;
         this.homeScore = homeScore;
         this.awayScore = awayScore;
     }

@@ -61,11 +61,9 @@ live:
       enabled: ${LIVE_API_FOOTBALL_CIRCUIT_BREAKER_ENABLED:true}
       failure-threshold: ${LIVE_API_FOOTBALL_CIRCUIT_BREAKER_FAILURE_THRESHOLD:5}
       cooldown-ms: ${LIVE_API_FOOTBALL_CIRCUIT_BREAKER_COOLDOWN_MS:60000}
-  sync:
-    enabled: ${LIVE_SYNC_ENABLED:false}
-    interval-ms: ${LIVE_SYNC_INTERVAL_MS:5000}
-    failure-threshold: ${LIVE_SYNC_FAILURE_THRESHOLD:3}
-    failure-cooldown-ms: ${LIVE_SYNC_FAILURE_COOLDOWN_MS:60000}
+  sse:
+    timeout-ms: ${LIVE_SSE_TIMEOUT_MS:1800000}
+    heartbeat-ms: ${LIVE_SSE_HEARTBEAT_MS:25000}
 
 external-api:
   retry:
@@ -144,7 +142,7 @@ api-football:
     fixture-details:
       enabled: ${API_FOOTBALL_FIXTURE_DETAILS_SYNC_ENABLED:false}
       run-on-startup: ${API_FOOTBALL_FIXTURE_DETAILS_SYNC_RUN_ON_STARTUP:false}
-      live-cron: ${API_FOOTBALL_FIXTURE_DETAILS_LIVE_CRON:0 * * * * *}
+      live-cron: ${API_FOOTBALL_FIXTURE_DETAILS_LIVE_CRON:15 * * * * *}
       daily-cron: ${API_FOOTBALL_FIXTURE_DETAILS_DAILY_CRON:0 55 4 * * *}
       chunk-size: ${API_FOOTBALL_FIXTURE_DETAILS_CHUNK_SIZE:10}
     players:

@@ -33,6 +33,7 @@ public class LiveFixtureSnapshotService {
                 .statusLong(fixture.getStatusLong())
                 .fixtureStatus(fixture.getFixtureStatus())
                 .elapsed(fixture.getElapsed())
+                .extra(fixture.getExtra())
                 .homeWinner(fixture.getHomeWinner())
                 .awayWinner(fixture.getAwayWinner())
                 .halftimeHomeScore(fixture.getHalftimeHomeScore())

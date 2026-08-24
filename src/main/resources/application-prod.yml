@@ -3,10 +3,9 @@ live:
     base-url: ${LIVE_API_FOOTBALL_BASE_URL:https://v3.football.api-sports.io}
     api-key: ${API_FOOTBALL_KEY}
     api-host: ${API_FOOTBALL_HOST:}
-  sync:
-    enabled: ${LIVE_SYNC_ENABLED:false  }
-    failure-threshold: ${LIVE_SYNC_FAILURE_THRESHOLD:3}
-    failure-cooldown-ms: ${LIVE_SYNC_FAILURE_COOLDOWN_MS:60000}
+  sse:
+    timeout-ms: ${LIVE_SSE_TIMEOUT_MS:1800000}
+    heartbeat-ms: ${LIVE_SSE_HEARTBEAT_MS:25000}
 
 api-football:
   sync:
@@ -43,7 +42,7 @@ api-football:
     fixture-details:
       enabled: ${API_FOOTBALL_FIXTURE_DETAILS_SYNC_ENABLED:true}
       run-on-startup: ${API_FOOTBALL_FIXTURE_DETAILS_SYNC_RUN_ON_STARTUP:false}
-      live-cron: ${API_FOOTBALL_FIXTURE_DETAILS_LIVE_CRON:0 * * * * *}
+      live-cron: ${API_FOOTBALL_FIXTURE_DETAILS_LIVE_CRON:15 * * * * *}
       daily-cron: ${API_FOOTBALL_FIXTURE_DETAILS_DAILY_CRON:0 55 4 * * *}
       chunk-size: ${API_FOOTBALL_FIXTURE_DETAILS_CHUNK_SIZE:10}
     players:
@@ -70,7 +69,7 @@ logging:
       - com.son.soccerStreaming.apifootball.service.ApiFootballPlayerSyncService
       - com.son.soccerStreaming.apifootball.service.ApiFootballInjurySyncService
       - com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService
-      - com.son.soccerStreaming.live.service.LiveFixturePollingScheduler
+      - com.son.soccerStreaming.live.service.SseService
       - com.son.soccerStreaming.media.service.ImageCacheService
   level:
     sync-detail: ${LOGGING_LEVEL_SYNC_DETAIL:INFO}

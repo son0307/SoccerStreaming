@@ -39,6 +39,10 @@ public class FixtureResponseDto {
         private Integer penaltyHomeScore;
         private Integer penaltyAwayScore;
         private String fixtureStatus;
+        private String statusShort;
+        private String statusLong;
+        private Integer elapsed;
+        private Integer extra;
     }
 
     @Getter

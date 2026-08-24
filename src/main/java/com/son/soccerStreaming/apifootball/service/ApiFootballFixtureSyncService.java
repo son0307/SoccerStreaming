@@ -38,6 +38,8 @@ public class ApiFootballFixtureSyncService {
     private static final List<String> OVERRIDE_FIELDS = List.of(
             "fixtureDate", "referee", "venueId", "venueName", "venueCity"
     );
+    private static final Set<String> LIVE_STATUS_SHORTS = Set.of("1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE");
+    private static final Set<String> FINISHED_STATUS_SHORTS = Set.of("FT", "AET", "PEN");
 
     @CacheEvict(
             cacheNames = {
@@ -201,6 +203,7 @@ public class ApiFootballFixtureSyncService {
                 statusLong,
                 fixtureStatusOf(statusShort),
                 status != null ? status.getElapsed() : fixture.getElapsed(),
+                status != null ? status.getExtra() : fixture.getExtra(),
                 goals != null ? goals.getHome() : fixture.getHomeScore(),
                 goals != null ? goals.getAway() : fixture.getAwayScore()
         );
@@ -239,10 +242,10 @@ public class ApiFootballFixtureSyncService {
         if (statusShort == null || "NS".equals(statusShort) || "TBD".equals(statusShort)) {
             return "SCHEDULED";
         }
-        if ("FT".equals(statusShort) || "AET".equals(statusShort) || "PEN".equals(statusShort)) {
+        if (FINISHED_STATUS_SHORTS.contains(statusShort)) {
             return "FINISHED";
         }
-        return "LIVE";
+        return LIVE_STATUS_SHORTS.contains(statusShort) ? "LIVE" : "SCHEDULED";
     }
 
     private LocalDateTime parseFixtureDate(String date, LocalDateTime fallback) {

@@ -20,6 +20,7 @@ public class LiveFixtureSnapshotDto {
     private String statusLong;
     private String fixtureStatus;
     private Integer elapsed;
+    private Integer extra;
     private Boolean homeWinner;
     private Boolean awayWinner;
     private Integer halftimeHomeScore;

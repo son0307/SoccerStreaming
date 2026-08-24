@@ -59,6 +59,10 @@ class FixtureServiceTest {
                 .homeScore(2)
                 .awayScore(1)
                 .fixtureStatus("FINISHED")
+                .statusShort("FT")
+                .statusLong("Match Finished")
+                .elapsed(90)
+                .extra(4)
                 .build();
 
         when(fixtureRepository.findByFixtureId(100L)).thenReturn(Optional.of(fixture));
@@ -79,6 +83,10 @@ class FixtureServiceTest {
         assertThat(response.getReferee()).isEqualTo("Michael Oliver");
         assertThat(response.getVenueName()).isEqualTo("Tottenham Hotspur Stadium");
         assertThat(response.getFixtureStatus()).isEqualTo("FINISHED");
+        assertThat(response.getStatusShort()).isEqualTo("FT");
+        assertThat(response.getStatusLong()).isEqualTo("Match Finished");
+        assertThat(response.getElapsed()).isEqualTo(90);
+        assertThat(response.getExtra()).isEqualTo(4);
     }
 
     @Test

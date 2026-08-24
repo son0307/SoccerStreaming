@@ -1137,7 +1137,7 @@ h2 {
 
 .home-fixture-card {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) max-content;
+  grid-template-columns: 54px minmax(0, 1fr) 76px;
   align-items: center;
   gap: 9px;
   min-height: 58px;
@@ -1152,6 +1152,16 @@ h2 {
   border-color: #8db78e;
   box-shadow: 0 12px 28px rgba(41, 65, 44, 0.1);
   transform: translateY(-1px);
+}
+
+.home-fixture-card > .status-pill,
+.fixture-match-card > .status-pill {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-fixture-card time {
@@ -1951,7 +1961,7 @@ h2 {
 
 .fixture-match-card {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 58px minmax(0, 1fr) max-content;
+  grid-template-columns: 54px minmax(0, 1fr) 58px minmax(0, 1fr) 76px;
   align-items: center;
   gap: 9px;
   min-height: 64px;
@@ -4343,7 +4353,7 @@ h2 {
 
 .team-detail-fixture-row {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 22px 54px 22px minmax(0, 1fr) max-content;
+  grid-template-columns: 54px minmax(0, 1fr) 22px 54px 22px minmax(0, 1fr) 76px;
   align-items: center;
   gap: 7px;
   min-height: 52px;
@@ -4394,6 +4404,24 @@ h2 {
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.live-connection-status {
+  color: #67746a;
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.live-connection-status.connected {
+  color: #1b5e20;
+}
+
+.live-connection-status.reconnecting {
+  color: #9a6700;
 }
 
 .team-detail-fixture-row .team-logo {
@@ -5747,7 +5775,7 @@ h2 {
   }
 
   .home-fixture-card {
-    grid-template-columns: 36px minmax(0, 1fr) max-content;
+    grid-template-columns: 36px minmax(0, 1fr) 64px;
     gap: 5px;
     min-height: 52px;
     padding: 8px;
@@ -5914,7 +5942,7 @@ h2 {
   }
 
   .team-detail-fixture-row {
-    grid-template-columns: 36px minmax(0, 1fr) 18px 44px 18px minmax(0, 1fr) max-content;
+    grid-template-columns: 36px minmax(0, 1fr) 18px 44px 18px minmax(0, 1fr) 64px;
     gap: 4px;
     padding: 9px 10px;
   }
@@ -6207,7 +6235,7 @@ h2 {
   }
 
   .fixture-match-card {
-    grid-template-columns: 36px minmax(0, 1fr) 44px minmax(0, 1fr) max-content;
+    grid-template-columns: 36px minmax(0, 1fr) 44px minmax(0, 1fr) 64px;
     gap: 4px;
     min-height: 52px;
     padding: 8px 8px;

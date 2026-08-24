@@ -73,6 +73,30 @@ class ApiFootballFixtureSyncServiceTest {
         assertThat(fixture.getVenueCity()).isEqualTo("New city");
     }
 
+    @Test
+    void fixtureSyncStoresElapsedAndAddedTime() {
+        Fixture fixture = Fixture.builder()
+                .fixtureId(1000L)
+                .fixtureDate(LocalDateTime.of(2026, 8, 8, 12, 0))
+                .build();
+        ApiFootballLiveDto.Status status = new ApiFootballLiveDto.Status();
+        ReflectionTestUtils.setField(status, "shortStatus", "2H");
+        ReflectionTestUtils.setField(status, "longStatus", "Second Half");
+        ReflectionTestUtils.setField(status, "elapsed", 90);
+        ReflectionTestUtils.setField(status, "extra", 6);
+        ApiFootballLiveDto.FixtureInfo fixtureInfo = new ApiFootballLiveDto.FixtureInfo();
+        ReflectionTestUtils.setField(fixtureInfo, "status", status);
+        ApiFootballLiveDto.FixtureResponse response = new ApiFootballLiveDto.FixtureResponse();
+        ReflectionTestUtils.setField(response, "fixture", fixtureInfo);
+        keepCurrentValueWhenOverridden();
+
+        ReflectionTestUtils.invokeMethod(service, "updateFixture", fixture, response, Set.of());
+
+        assertThat(fixture.getFixtureStatus()).isEqualTo("LIVE");
+        assertThat(fixture.getElapsed()).isEqualTo(90);
+        assertThat(fixture.getExtra()).isEqualTo(6);
+    }
+
     private void keepCurrentValueWhenOverridden() {
         doAnswer(invocation -> {
             Set<?> overrides = invocation.getArgument(0);

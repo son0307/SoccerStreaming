@@ -26,6 +26,7 @@ import {
 import type { AuthStatus } from "../App";
 import { formatFixtureDateKey, parseKoreaDateTime } from "../dateUtils";
 import { displayLocalizedName } from "../teamNames";
+import { fixtureStatusLabel } from "../fixtureStatus";
 
 type LoadState<T> = {
   data: T | null;
@@ -983,7 +984,7 @@ function TeamFixtureGroups({ groupedFixtures }: { groupedFixtures: Array<[string
                 <span className="team-logo placeholder" aria-hidden="true" />
               )}
               <strong>{displayLocalizedName(fixture.awayTeamNameKo, fixture.awayTeamName)}</strong>
-              <em>{fixture.fixtureStatus ?? "예정"}</em>
+              <em>{fixtureStatusLabel(fixture)}</em>
             </Link>
           ))}
         </section>

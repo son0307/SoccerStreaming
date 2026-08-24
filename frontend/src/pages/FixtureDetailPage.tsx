@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import { Pencil } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -17,6 +17,7 @@ import {
   type FixtureHeadToHeadMatch,
   type FixtureLineupPlayer,
   type FixtureLineupResponse,
+  type LiveFixtureSnapshot,
   type FixturePlayerStat,
   type FixturePlayerStatResponse,
   type FixtureStatResponse,
@@ -29,6 +30,7 @@ import {
 } from "../api";
 import { parseKoreaDateTime } from "../dateUtils";
 import { displayLocalizedName } from "../teamNames";
+import { fixtureStatusLabel, isLiveFixture } from "../fixtureStatus";
 
 type DetailTab = "events" | "lineups" | "stats" | "headToHead";
 type LoadState<T> = {
@@ -37,6 +39,7 @@ type LoadState<T> = {
   isLoading: boolean;
 };
 type CoverageStatus = "loading" | "ready" | "error";
+type LiveConnectionStatus = "connecting" | "connected" | "reconnecting" | null;
 type Side = "home" | "away";
 type EventSide = Side | "neutral";
 type EventCategory =
@@ -82,6 +85,8 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
   const { fixtureId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const numericFixtureId = Number(fixtureId);
+  const activeFixtureIdRef = useRef(numericFixtureId);
+  activeFixtureIdRef.current = numericFixtureId;
   const activeTab = detailTab(searchParams.get("tab")) ?? "events";
   const [fixtureState, setFixtureState] = useState<LoadState<FixtureSummary>>(initialLoadState);
   const [eventsState, setEventsState] = useState<LoadState<FixtureEventResponse>>(initialLoadState);
@@ -91,6 +96,7 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
   const [playerStatsState, setPlayerStatsState] = useState<LoadState<FixturePlayerStatResponse>>(initialLoadState);
   const [seasonCoverages, setSeasonCoverages] = useState<LeagueSeasonCoverage[]>([]);
   const [coverageStatus, setCoverageStatus] = useState<CoverageStatus>("loading");
+  const [liveConnectionStatus, setLiveConnectionStatus] = useState<LiveConnectionStatus>(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -136,7 +142,7 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
     setStatsState(initialLoadState);
     setPlayerStatsState(initialLoadState);
 
-    fetchFixture(numericFixtureId)
+    fetchFixture(numericFixtureId, { fresh: true })
       .then((data) => {
         if (isCurrent) {
           setFixtureState({ data, error: "", isLoading: false });
@@ -199,7 +205,12 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
 
     if (isSupported(coverage?.fixtureStats)) {
       setStatsState(initialLoadState);
-      void loadSection(fetchFixtureStats(numericFixtureId), setStatsState, "팀 통계를 불러오지 못했습니다.", () => isCurrent);
+      void loadSection(
+        fetchFixtureStats(numericFixtureId, { fresh: isLiveFixture(fixture) }),
+        setStatsState,
+        "팀 통계를 불러오지 못했습니다.",
+        () => isCurrent,
+      );
     } else {
       setStatsState({ data: null, error: UNSUPPORTED_MESSAGE, isLoading: false });
     }
@@ -219,7 +230,127 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
     return () => {
       isCurrent = false;
     };
-  }, [coverageStatus, fixtureState.data, numericFixtureId, seasonCoverages]);
+  }, [coverageStatus, fixtureState.data?.season, numericFixtureId, seasonCoverages]);
+
+  useEffect(() => {
+    const fixture = fixtureState.data;
+    if (!fixture || !isLiveFixture(fixture) || !Number.isFinite(numericFixtureId) || numericFixtureId <= 0) {
+      setLiveConnectionStatus(null);
+      return;
+    }
+
+    let isCurrent = true;
+    let fallbackTimerId: number | null = null;
+    const eventSource = new EventSource(`/api/v1/live/stream/fixtures/${numericFixtureId}`);
+    setLiveConnectionStatus("connecting");
+
+    const refreshLiveState = async (finalRefresh = false) => {
+      const [fixtureResult, eventsResult, statsResult, playerStatsResult] = await Promise.allSettled([
+        fetchFixture(numericFixtureId, { fresh: true }),
+        fetchFixtureEvents(numericFixtureId),
+        fetchFixtureStats(numericFixtureId, { fresh: true }),
+        fetchFixturePlayerStats(numericFixtureId),
+      ]);
+      if ((!isCurrent && !finalRefresh) || activeFixtureIdRef.current !== numericFixtureId) {
+        return;
+      }
+      if (fixtureResult.status === "fulfilled") {
+        setFixtureState({ data: fixtureResult.value, error: "", isLoading: false });
+      }
+      if (eventsResult.status === "fulfilled") {
+        setEventsState({ data: eventsResult.value, error: "", isLoading: false });
+      }
+      if (statsResult.status === "fulfilled") {
+        setStatsState({ data: statsResult.value, error: "", isLoading: false });
+      }
+      if (playerStatsResult.status === "fulfilled") {
+        setPlayerStatsState({ data: playerStatsResult.value, error: "", isLoading: false });
+      }
+    };
+
+    const stopFallbackPolling = () => {
+      if (fallbackTimerId !== null) {
+        window.clearInterval(fallbackTimerId);
+        fallbackTimerId = null;
+      }
+    };
+
+    eventSource.onopen = () => {
+      if (!isCurrent) {
+        return;
+      }
+      setLiveConnectionStatus("connected");
+      stopFallbackPolling();
+      void refreshLiveState();
+    };
+
+    eventSource.onerror = () => {
+      if (!isCurrent) {
+        return;
+      }
+      setLiveConnectionStatus("reconnecting");
+      if (fallbackTimerId === null) {
+        void refreshLiveState();
+        fallbackTimerId = window.setInterval(() => void refreshLiveState(), 60_000);
+      }
+    };
+
+    eventSource.addEventListener("LIVE_SNAPSHOT", (rawEvent) => {
+      const snapshot = parseSseData<LiveFixtureSnapshot>(rawEvent);
+      if (!snapshot || snapshot.fixtureId !== numericFixtureId || !isCurrent) {
+        return;
+      }
+      setFixtureState((current) => current.data ? {
+        data: {
+          ...current.data,
+          fixtureStatus: snapshot.fixtureStatus,
+          statusShort: snapshot.statusShort,
+          statusLong: snapshot.statusLong,
+          elapsed: snapshot.elapsed,
+          extra: snapshot.extra,
+          homeScore: snapshot.homeTeamStat?.score ?? current.data.homeScore,
+          awayScore: snapshot.awayTeamStat?.score ?? current.data.awayScore,
+        },
+        error: "",
+        isLoading: false,
+      } : current);
+      setStatsState({
+        data: {
+          fixtureId: snapshot.fixtureId,
+          homeTeamStat: snapshot.homeTeamStat,
+          awayTeamStat: snapshot.awayTeamStat,
+        },
+        error: "",
+        isLoading: false,
+      });
+      if (snapshot.fixtureStatus?.toUpperCase() !== "LIVE") {
+        eventSource.close();
+        stopFallbackPolling();
+        setLiveConnectionStatus(null);
+        void refreshLiveState(true);
+      }
+    });
+
+    eventSource.addEventListener("FIXTURE_EVENTS", (rawEvent) => {
+      const response = parseSseData<FixtureEventResponse>(rawEvent);
+      if (response?.fixtureId === numericFixtureId && isCurrent) {
+        setEventsState({ data: response, error: "", isLoading: false });
+      }
+    });
+
+    eventSource.addEventListener("PLAYER_STATS", (rawEvent) => {
+      const response = parseSseData<FixturePlayerStatResponse>(rawEvent);
+      if (response?.fixtureId === numericFixtureId && isCurrent) {
+        setPlayerStatsState({ data: response, error: "", isLoading: false });
+      }
+    });
+
+    return () => {
+      isCurrent = false;
+      stopFallbackPolling();
+      eventSource.close();
+    };
+  }, [fixtureState.data?.fixtureStatus, numericFixtureId]);
 
   if (fixtureState.isLoading) {
     return (
@@ -265,6 +396,7 @@ export function FixtureDetailPage({ currentUser }: { currentUser: CurrentUser | 
         homeTeamId={homeTeamId}
         isAdmin={currentUser?.role === "ADMIN"}
         lineups={lineupsState.data}
+        liveConnectionStatus={liveConnectionStatus}
       />
 
       <nav className="detail-tabs" aria-label="경기 상세 메뉴">
@@ -337,6 +469,17 @@ async function loadSection<T>(
   }
 }
 
+function parseSseData<T>(event: Event): T | null {
+  if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+    return null;
+  }
+  try {
+    return JSON.parse(event.data) as T;
+  } catch {
+    return null;
+  }
+}
+
 function FixtureDetailHero({
   awayTeamId,
   events,
@@ -344,6 +487,7 @@ function FixtureDetailHero({
   homeTeamId,
   isAdmin,
   lineups,
+  liveConnectionStatus,
 }: {
   awayTeamId: number | null;
   events: FixtureEvent[];
@@ -351,6 +495,7 @@ function FixtureDetailHero({
   homeTeamId: number | null;
   isAdmin: boolean;
   lineups: FixtureLineupResponse | null;
+  liveConnectionStatus: LiveConnectionStatus;
 }) {
   const dateParts = fixtureDateParts(fixture.fixtureDate);
   const playerTeamIds = lineupPlayerTeamIds(lineups);
@@ -393,7 +538,12 @@ function FixtureDetailHero({
             관리자 수정
           </Link>
         ) : null}
-        <span className="status-pill">{fixture.fixtureStatus ?? "예정"}</span>
+        <span className="status-pill">{fixtureStatusLabel(fixture)}</span>
+        {liveConnectionStatus ? (
+          <small className={`live-connection-status ${liveConnectionStatus}`}>
+            {liveConnectionStatus === "connected" ? "실시간 연결됨" : liveConnectionStatus === "connecting" ? "실시간 연결 중" : "재연결 중 · 1분 폴백"}
+          </small>
+        ) : null}
       </div>
         {isAdmin ? (
           <Link aria-label="관리자 수정" className="admin-edit-link icon fixture-admin-edit-link" title="관리자 수정" to={`/admin/editor?tab=fixture&id=${fixture.fixtureId}`}>

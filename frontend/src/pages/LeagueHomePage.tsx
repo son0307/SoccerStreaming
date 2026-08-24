@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { formatFixtureDateKey, parseKoreaDateTime } from "../dateUtils";
 import { displayLocalizedName } from "../teamNames";
+import { fixtureStatusLabel } from "../fixtureStatus";
 
 export function LeagueHomePage({ authStatus, season }: { authStatus: AuthStatus; season: number }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -309,7 +310,7 @@ function FixtureSchedule({ fixtures }: { fixtures: FixtureSummary[] }) {
             )}
             <strong>{displayLocalizedName(fixture.awayTeamNameKo, fixture.awayTeamName)}</strong>
           </div>
-          <span className="status-pill">{fixture.fixtureStatus ?? "예정"}</span>
+          <span className="status-pill">{fixtureStatusLabel(fixture)}</span>
         </Link>
       ))}
     </div>

@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { formatFixtureDateKey, parseKoreaDateTime } from "../dateUtils";
 import { displayLocalizedName } from "../teamNames";
+import { fixtureStatusLabel } from "../fixtureStatus";
 import { SyncToast } from "../components/SyncToast";
 import { useManualSyncCooldown } from "../useManualSyncCooldown";
 
@@ -565,7 +566,7 @@ function FixtureCard({ fixture }: { fixture: FixtureSummary }) {
         )}
         <strong>{displayLocalizedName(fixture.awayTeamNameKo, fixture.awayTeamName)}</strong>
       </div>
-      <span className="status-pill">{fixture.fixtureStatus ?? "예정"}</span>
+      <span className="status-pill">{fixtureStatusLabel(fixture)}</span>
     </Link>
   );
 }
