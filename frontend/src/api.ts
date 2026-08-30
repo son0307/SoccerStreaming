@@ -123,7 +123,6 @@ export type LeaguePlayerRankingRow = {
   teamName: string | null;
   teamNameKo: string | null;
   teamLogoUrl: string | null;
-  teamRank: number | null;
   appearances: number;
   minutes: number;
   rating: number;
@@ -140,6 +139,7 @@ export type LeaguePlayerRankingRow = {
   conceded: number;
   cleanSheets: number;
   savePercentage: number | null;
+  provisional: boolean;
 };
 
 export type LeagueTeamRankings = {

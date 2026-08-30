@@ -290,9 +290,14 @@ function FixtureSchedule({ fixtures }: { fixtures: FixtureSummary[] }) {
     return <div className="empty-state">선택한 날짜에 등록된 경기가 없습니다.</div>;
   }
 
+  const orderedFixtures = fixtures.slice().sort((left, right) =>
+    fixtureTime(left.fixtureDate) - fixtureTime(right.fixtureDate)
+      || left.fixtureId - right.fixtureId,
+  );
+
   return (
     <div className="home-fixture-list">
-      {fixtures.map((fixture) => (
+      {orderedFixtures.map((fixture) => (
         <Link className="home-fixture-card" key={fixture.fixtureId} to={`/fixtures/${fixture.fixtureId}`}>
           <time>{formatTime(fixture.fixtureDate)}</time>
           <div className="home-fixture-teams">
@@ -528,6 +533,10 @@ function formatTime(value: string | null) {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function fixtureTime(value: string | null) {
+  return parseKoreaDateTime(value)?.getTime() ?? Number.MAX_SAFE_INTEGER;
 }
 
 function scoreText(fixture: FixtureSummary) {

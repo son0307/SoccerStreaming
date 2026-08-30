@@ -30,7 +30,6 @@ public class LeaguePlayerRankingService {
 
     private static final int TOP_LIMIT = 20;
     private static final int MIN_RATING_APPEARANCES = 5;
-    private static final int MIN_SAVE_PERCENTAGE_APPEARANCES = 10;
     private static final int MIN_SAVE_ATTEMPTS = 10;
 
     private final PlayerTeamSeasonStatRepository playerTeamSeasonStatRepository;
@@ -41,7 +40,7 @@ public class LeaguePlayerRankingService {
     @Cacheable(
             cacheManager = RedisCacheConfig.RANKINGS_CACHE_MANAGER,
             cacheNames = RedisCacheConfig.LEAGUE_PLAYER_RANKINGS_CACHE,
-            key = "'v3:league:' + #leagueId + ':season:' + #season",
+            key = "'v5:league:' + #leagueId + ':season:' + #season",
             sync = true
     )
     public LeaguePlayerRankingResponseDto getRankings(Integer leagueId, Integer season) {
@@ -64,18 +63,18 @@ public class LeaguePlayerRankingService {
                                 item -> item
                         ));
         Map<Long, Long> latestTeamByPlayer = latestTeamByPlayer(playerIds, season);
-        Map<Long, Integer> teamRanks = teamStandingRepository.findAllByLeagueIdAndSeason(leagueId, season).stream()
+        List<TeamStanding> standings = teamStandingRepository.findAllByLeagueIdAndSeason(leagueId, season);
+        Map<Long, Integer> teamMatchesPlayed = standings.stream()
                 .collect(Collectors.toMap(
                         standing -> standing.getTeam().getTeamId(),
-                        standing -> standing.getRank() != null ? standing.getRank() : Integer.MAX_VALUE,
-                        Math::min
+                        standing -> valueOf(standing.getPlayed()),
+                        Math::max
                 ));
 
         List<LeaguePlayerRankingResponseDto.Row> rows = aggregateRows(
                 stats,
                 matchAggregates,
-                latestTeamByPlayer,
-                teamRanks
+                latestTeamByPlayer
         );
 
         return LeaguePlayerRankingResponseDto.builder()
@@ -84,7 +83,12 @@ public class LeaguePlayerRankingService {
                 .goals(rank(rows, row -> row.getGoals() > 0, goalsComparator()))
                 .assists(rank(rows, row -> row.getAssists() > 0, assistsComparator()))
                 .attackPoints(rank(rows, row -> row.getAttackPoints() > 0, attackPointsComparator()))
-                .ratings(rank(rows, row -> row.getAppearances() >= MIN_RATING_APPEARANCES, ratingComparator()))
+                .ratings(rank(
+                        rows,
+                        row -> row.getAppearances() >= minimumRatingAppearances(teamMatchesPlayed, row.getTeamId()),
+                        ratingComparator(),
+                        row -> row.getAppearances() < MIN_RATING_APPEARANCES
+                ))
                 .minutes(rank(rows, row -> row.getMinutes() > 0, minutesComparator()))
                 .yellowCards(rank(rows, row -> row.getYellowCards() > 0, yellowCardsComparator()))
                 .redCards(rank(rows, row -> row.getRedCards() > 0, redCardsComparator()))
@@ -97,10 +101,11 @@ public class LeaguePlayerRankingService {
                 .savePercentages(rank(
                         rows,
                         row -> isGoalkeeper(row.getPosition())
-                                && row.getAppearances() >= MIN_SAVE_PERCENTAGE_APPEARANCES
                                 && row.getSavePercentage() != null
-                                && row.getSaves() + row.getConceded() >= MIN_SAVE_ATTEMPTS,
-                        savePercentageComparator()
+                                && row.getSaves() + row.getConceded()
+                                >= minimumSaveAttempts(teamMatchesPlayed, row.getTeamId()),
+                        savePercentageComparator(),
+                        row -> row.getSaves() + row.getConceded() < MIN_SAVE_ATTEMPTS
                 ))
                 .build();
     }
@@ -108,8 +113,7 @@ public class LeaguePlayerRankingService {
     private List<LeaguePlayerRankingResponseDto.Row> aggregateRows(
             List<PlayerTeamSeasonStat> stats,
             Map<Long, PlayerFixtureStatRepository.PlayerRankingMatchAggregate> matchAggregates,
-            Map<Long, Long> latestTeamByPlayer,
-            Map<Long, Integer> teamRanks
+            Map<Long, Long> latestTeamByPlayer
     ) {
         Map<Long, List<PlayerTeamSeasonStat>> statsByPlayer = stats.stream()
                 .collect(Collectors.groupingBy(
@@ -122,8 +126,7 @@ public class LeaguePlayerRankingService {
                 .map(entry -> toRow(
                         entry.getValue(),
                         matchAggregates.get(entry.getKey()),
-                        latestTeamByPlayer.get(entry.getKey()),
-                        teamRanks
+                        latestTeamByPlayer.get(entry.getKey())
                 ))
                 .toList();
     }
@@ -131,8 +134,7 @@ public class LeaguePlayerRankingService {
     private LeaguePlayerRankingResponseDto.Row toRow(
             List<PlayerTeamSeasonStat> stats,
             PlayerFixtureStatRepository.PlayerRankingMatchAggregate matchAggregate,
-            Long latestTeamId,
-            Map<Long, Integer> teamRanks
+            Long latestTeamId
     ) {
         Player player = stats.get(0).getPlayer();
         PlayerTeamSeasonStat displayStat = displayStat(stats, latestTeamId);
@@ -163,7 +165,6 @@ public class LeaguePlayerRankingService {
                 .teamName(team.getName())
                 .teamNameKo(team.getKoreanName())
                 .teamLogoUrl(mediaUrlService.teamLogoUrl(team))
-                .teamRank(teamRanks.getOrDefault(team.getTeamId(), Integer.MAX_VALUE))
                 .appearances(appearances)
                 .minutes(sum(stats, PlayerTeamSeasonStat::getMinutes))
                 .rating(ratingAppearances > 0 ? roundToTwoDecimals(weightedRating / ratingAppearances) : 0)
@@ -210,107 +211,91 @@ public class LeaguePlayerRankingService {
             Predicate<LeaguePlayerRankingResponseDto.Row> filter,
             Comparator<LeaguePlayerRankingResponseDto.Row> comparator
     ) {
+        return rank(rows, filter, comparator, row -> false);
+    }
+
+    private List<LeaguePlayerRankingResponseDto.Row> rank(
+            List<LeaguePlayerRankingResponseDto.Row> rows,
+            Predicate<LeaguePlayerRankingResponseDto.Row> filter,
+            Comparator<LeaguePlayerRankingResponseDto.Row> comparator,
+            Predicate<LeaguePlayerRankingResponseDto.Row> provisional
+    ) {
         List<LeaguePlayerRankingResponseDto.Row> ranked = rows.stream()
                 .filter(filter)
-                .sorted(comparator)
-                .limit(TOP_LIMIT)
+                .sorted(comparator.thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId))
                 .toList();
         List<LeaguePlayerRankingResponseDto.Row> result = new ArrayList<>(ranked.size());
+        LeaguePlayerRankingResponseDto.Row previous = null;
+        int currentRank = 0;
         for (int index = 0; index < ranked.size(); index++) {
-            result.add(ranked.get(index).toBuilder().rank(index + 1).build());
+            LeaguePlayerRankingResponseDto.Row row = ranked.get(index);
+            if (previous == null || comparator.compare(previous, row) != 0) {
+                currentRank = index + 1;
+            }
+            if (currentRank > TOP_LIMIT) {
+                break;
+            }
+            result.add(row.toBuilder()
+                    .rank(currentRank)
+                    .provisional(provisional.test(row))
+                    .build());
+            previous = row;
         }
         return result;
     }
 
+    private int minimumRatingAppearances(Map<Long, Integer> teamMatchesPlayed, Long teamId) {
+        int played = teamMatchesPlayed.getOrDefault(teamId, 0);
+        return Math.min(MIN_RATING_APPEARANCES, Math.max(1, (int) Math.ceil(played * 0.6)));
+    }
+
+    private int minimumSaveAttempts(Map<Long, Integer> teamMatchesPlayed, Long teamId) {
+        int played = teamMatchesPlayed.getOrDefault(teamId, 0);
+        return Math.min(MIN_SAVE_ATTEMPTS, Math.max(3, played * 2));
+    }
+
     private Comparator<LeaguePlayerRankingResponseDto.Row> goalsComparator() {
         return descendingInt(LeaguePlayerRankingResponseDto.Row::getGoals)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getPenaltyGoals)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAssists))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getGoalMatches))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getRedCards)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getPenaltyGoals);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> assistsComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getAssists)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getGoals))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAssistMatches))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getRedCards)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getAssists);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> attackPointsComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getAttackPoints)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getGoals))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAssists))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAttackPointMatches))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getRedCards)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getAttackPoints);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> ratingComparator() {
-        return Comparator.comparingDouble(LeaguePlayerRankingResponseDto.Row::getRating).reversed()
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAppearances))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getMinutes))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return Comparator.comparingDouble(LeaguePlayerRankingResponseDto.Row::getRating).reversed();
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> minutesComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAppearances))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getMinutes);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> yellowCardsComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getRedCards))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAppearances))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> redCardsComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getRedCards)
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getYellowCards))
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getAppearances))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getRedCards);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> savesComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getSaves)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getSaves);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> cleanSheetsComparator() {
-        return descendingInt(LeaguePlayerRankingResponseDto.Row::getCleanSheets)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+        return descendingInt(LeaguePlayerRankingResponseDto.Row::getCleanSheets);
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> savePercentageComparator() {
         return Comparator.comparing(
                         LeaguePlayerRankingResponseDto.Row::getSavePercentage,
                         Comparator.nullsLast(Comparator.reverseOrder())
-                )
-                .thenComparing(descendingInt(LeaguePlayerRankingResponseDto.Row::getSaves))
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getMinutes)
-                .thenComparingInt(LeaguePlayerRankingResponseDto.Row::getTeamRank)
-                .thenComparingLong(LeaguePlayerRankingResponseDto.Row::getPlayerId);
+                );
     }
 
     private Comparator<LeaguePlayerRankingResponseDto.Row> descendingInt(

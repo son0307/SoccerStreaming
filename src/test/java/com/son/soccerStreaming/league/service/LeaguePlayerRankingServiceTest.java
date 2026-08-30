@@ -83,7 +83,7 @@ class LeaguePlayerRankingServiceTest {
     }
 
     @Test
-    void appliesMatchCountersCleanSheetsAndMinimumSaveAttempts() {
+    void appliesMatchCountersCleanSheetsAndRegularMinimumSaveAttempts() {
         Team everton = team(45L, "Everton");
         Player eligibleKeeper = player(10L, "Eligible Keeper");
         Player fewAppearancesKeeper = player(20L, "Few Appearances");
@@ -131,10 +131,11 @@ class LeaguePlayerRankingServiceTest {
                     assertThat(row.getCleanSheets()).isZero();
                     assertThat(row.getSavePercentage()).isNull();
                 });
-        assertThat(response.getSavePercentages()).singleElement().satisfies(row -> {
-            assertThat(row.getPlayerId()).isEqualTo(10L);
-            assertThat(row.getSavePercentage()).isEqualTo(80.0);
-        });
+        assertThat(response.getSavePercentages())
+                .extracting(LeaguePlayerRankingResponseDto.Row::getPlayerId)
+                .containsExactly(20L, 10L);
+        assertThat(response.getSavePercentages())
+                .allSatisfy(row -> assertThat(row.isProvisional()).isFalse());
     }
 
     @Test
@@ -199,6 +200,81 @@ class LeaguePlayerRankingServiceTest {
         assertThat(response.getRatings())
                 .extracting(LeaguePlayerRankingResponseDto.Row::getPlayerId)
                 .containsExactly(100L, 200L);
+        assertThat(response.getRatings())
+                .allSatisfy(row -> assertThat(row.isProvisional()).isFalse());
+    }
+
+    @Test
+    void assignsCompetitionRanksWhenGoalAndPenaltyGoalCountsAreEqual() {
+        Team team = team(51L, "Tie Team");
+        Player first = player(501L, "First");
+        Player second = player(502L, "Second");
+        Player third = player(503L, "Third");
+        Player fourth = player(504L, "Fourth");
+
+        List<PlayerTeamSeasonStat> stats = List.of(
+                stat(third, team, 3, 0, 300, 7.0, 0, 0, 0, 0, 0),
+                stat(first, team, 3, 0, 900, 8.0, 5, 0, 0, 0, 0),
+                stat(fourth, team, 2, 0, 900, 8.5, 5, 0, 0, 0, 0),
+                stat(second, team, 3, 0, 600, 7.5, 2, 0, 0, 0, 0)
+        );
+
+        when(playerTeamSeasonStatRepository.findAllForLeagueRankings(39L, 2025)).thenReturn(stats);
+        when(playerFixtureStatRepository.findRankingMatchAggregates(
+                eq(List.of(503L, 501L, 504L, 502L)), eq(2025)
+        )).thenReturn(List.of());
+        when(playerFixtureStatRepository.findLatestTeamByPlayerIdsAndSeason(
+                eq(List.of(503L, 501L, 504L, 502L)), eq(2025)
+        )).thenReturn(List.of());
+        when(teamStandingRepository.findAllByLeagueIdAndSeason(39, 2025))
+                .thenReturn(List.of(standing(team, 1)));
+
+        LeaguePlayerRankingResponseDto response = service.getRankings(39, 2025);
+
+        assertThat(response.getGoals())
+                .extracting(LeaguePlayerRankingResponseDto.Row::getPlayerId)
+                .containsExactly(501L, 502L, 503L, 504L);
+        assertThat(response.getGoals())
+                .extracting(LeaguePlayerRankingResponseDto.Row::getRank)
+                .containsExactly(1, 1, 1, 4);
+    }
+
+    @Test
+    void relaxesRatingAndSaveAttemptThresholdsAtTheStartOfTheSeason() {
+        Team team = team(50L, "Early Season Team");
+        Player ratingEligible = player(401L, "Rating Eligible");
+        Player ratingTooFew = player(402L, "Rating Too Few");
+        Player saveEligible = player(403L, "Save Eligible");
+        Player saveTooFew = player(404L, "Save Too Few");
+
+        List<PlayerTeamSeasonStat> stats = List.of(
+                stat(ratingEligible, team, 0, 0, 180, 8.5, 0, 0, 0, 0, 0, 2),
+                stat(ratingTooFew, team, 0, 0, 90, 9.5, 0, 0, 0, 0, 0, 1),
+                stat(saveEligible, team, 0, 0, 90, 7.0, 0, 0, 0, 3, 1, 1),
+                stat(saveTooFew, team, 0, 0, 90, 7.0, 0, 0, 0, 2, 1, 1)
+        );
+
+        when(playerTeamSeasonStatRepository.findAllForLeagueRankings(39L, 2025)).thenReturn(stats);
+        when(playerFixtureStatRepository.findRankingMatchAggregates(
+                eq(List.of(401L, 402L, 403L, 404L)), eq(2025)
+        )).thenReturn(List.of());
+        when(playerFixtureStatRepository.findLatestTeamByPlayerIdsAndSeason(
+                eq(List.of(401L, 402L, 403L, 404L)), eq(2025)
+        )).thenReturn(List.of());
+        when(teamStandingRepository.findAllByLeagueIdAndSeason(39, 2025))
+                .thenReturn(List.of(standing(team, 1, 2)));
+
+        LeaguePlayerRankingResponseDto response = service.getRankings(39, 2025);
+
+        assertThat(response.getRatings()).singleElement().satisfies(row -> {
+            assertThat(row.getPlayerId()).isEqualTo(401L);
+            assertThat(row.isProvisional()).isTrue();
+        });
+        assertThat(response.getSavePercentages()).singleElement().satisfies(row -> {
+            assertThat(row.getPlayerId()).isEqualTo(403L);
+            assertThat(row.getSavePercentage()).isEqualTo(75.0);
+            assertThat(row.isProvisional()).isTrue();
+        });
     }
 
     private PlayerTeamSeasonStat stat(
@@ -276,7 +352,17 @@ class LeaguePlayerRankingServiceTest {
     }
 
     private TeamStanding standing(Team team, int rank) {
-        return TeamStanding.builder().team(team).leagueId(39).season(2025).rank(rank).build();
+        return standing(team, rank, 38);
+    }
+
+    private TeamStanding standing(Team team, int rank, int played) {
+        return TeamStanding.builder()
+                .team(team)
+                .leagueId(39)
+                .season(2025)
+                .rank(rank)
+                .played(played)
+                .build();
     }
 
     private PlayerFixtureStatRepository.LatestPlayerTeam latestTeam(

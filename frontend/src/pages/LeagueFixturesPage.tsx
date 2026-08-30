@@ -577,7 +577,7 @@ function standingsToTeamOptions(standings: TeamStanding[]): FixtureTeamOption[] 
     .sort((a, b) => valueOf(a.rank) - valueOf(b.rank))
     .map((standing) => ({
       teamId: standing.team?.id ?? 0,
-      teamName: standing.team?.name ?? "-",
+      teamName: displayLocalizedName(standing.team?.nameKo, standing.team?.name),
       logoUrl: standing.team?.logo ?? null,
     }))
     .filter((team) => team.teamId > 0);

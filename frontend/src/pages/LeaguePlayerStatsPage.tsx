@@ -49,7 +49,7 @@ const categories: RankingCategory[] = [
   {
     key: "assists",
     label: "도움",
-    description: "도움 수와 득점, 도움을 기록한 경기 수를 함께 반영합니다.",
+    description: "시즌 도움 수 순위이며, 도움 수가 같으면 공동 순위로 표시합니다.",
     primary: metric("도움", (row) => `${row.assists}`),
     secondary: [
       metric("득점", (row) => `${row.goals}`),
@@ -69,7 +69,7 @@ const categories: RankingCategory[] = [
   {
     key: "ratings",
     label: "평점",
-    description: "5경기 이상 출전한 선수의 시즌 평균 평점입니다.",
+    description: "시즌 평균 평점 순위입니다. 시즌 초반에는 진행 경기 수에 따라 최소 표본 기준이 조정됩니다. 정규 기준은 5경기 출전 / 피유효슈팅 10회입니다.",
     primary: metric("평점", (row) => row.rating.toFixed(2)),
     secondary: [
       metric("경기", (row) => `${row.appearances}`),
@@ -129,7 +129,7 @@ const categories: RankingCategory[] = [
   {
     key: "savePercentages",
     label: "선방률",
-    description: "피유효슈팅 10회 이상 골키퍼의 세이브 ÷ (세이브 + 실점) 값입니다.",
+    description: "골키퍼의 세이브 ÷ (세이브 + 실점) 값입니다. 시즌 초반에는 진행 경기 수에 따라 최소 표본 기준이 조정됩니다. 정규 기준은 5경기 출전 / 피유효슈팅 10회입니다.",
     primary: metric("선방률", (row) => formatPercentage(row.savePercentage)),
     secondary: [
       metric("세이브", (row) => `${row.saves}`),
@@ -308,7 +308,10 @@ function PlayerIdentity({ row }: { row: LeaguePlayerRankingRow }) {
         <span className="player-ranking-photo-placeholder" aria-hidden="true" />
       )}
       <div>
-        <Link to={`/players/${row.playerId}`}>{displayLocalizedName(row.playerNameKo, row.playerName)}</Link>
+        <span className="player-ranking-player-name">
+          <Link to={`/players/${row.playerId}`}>{displayLocalizedName(row.playerNameKo, row.playerName)}</Link>
+          {row.provisional ? <span className="player-ranking-provisional">잠정</span> : null}
+        </span>
         <span className="player-ranking-mobile-meta">
           {displayLocalizedName(row.teamNameKo, row.teamName)} · {positionLabel(row.position)}
         </span>

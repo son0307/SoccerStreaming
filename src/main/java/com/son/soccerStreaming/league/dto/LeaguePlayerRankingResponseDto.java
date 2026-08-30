@@ -41,7 +41,6 @@ public class LeaguePlayerRankingResponseDto {
         private String teamName;
         private String teamNameKo;
         private String teamLogoUrl;
-        private Integer teamRank;
         private int appearances;
         private int minutes;
         private double rating;
@@ -58,6 +57,7 @@ public class LeaguePlayerRankingResponseDto {
         private int conceded;
         private int cleanSheets;
         private Double savePercentage;
+        private boolean provisional;
 
         public Row(
                 Integer rank,
@@ -68,7 +68,6 @@ public class LeaguePlayerRankingResponseDto {
                 Long teamId,
                 String teamName,
                 String teamLogoUrl,
-                Integer teamRank,
                 int appearances,
                 int minutes,
                 double rating,
@@ -97,7 +96,6 @@ public class LeaguePlayerRankingResponseDto {
                     teamName,
                     null,
                     teamLogoUrl,
-                    teamRank,
                     appearances,
                     minutes,
                     rating,
@@ -113,7 +111,8 @@ public class LeaguePlayerRankingResponseDto {
                     saves,
                     conceded,
                     cleanSheets,
-                    savePercentage
+                    savePercentage,
+                    false
             );
         }
     }
