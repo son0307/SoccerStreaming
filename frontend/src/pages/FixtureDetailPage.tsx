@@ -1522,6 +1522,11 @@ function StatsPanel({
 }) {
   return (
     <div className="detail-stats-stack">
+      {isLiveFixture(fixture) ? (
+        <p className="live-stats-delay-notice" role="note">
+          진행 중인 경기의 팀·선수 통계는 데이터 제공처의 갱신 상황에 따라 실제 경기보다 늦게 반영될 수 있습니다.
+        </p>
+      ) : null}
       <TeamStatsPanel fixture={fixture} state={statsState} />
       <PlayerStatsPanel state={playerStatsState} />
     </div>

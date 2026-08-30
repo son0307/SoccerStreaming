@@ -497,6 +497,34 @@ export type RecentForm = StandingRecord & {
   points: number | null;
   goalsDiff: number | null;
   results: string[];
+  matches: StandingRecentMatch[];
+};
+
+export type StandingRecentMatch = {
+  fixtureId: number;
+  fixtureDate: string | null;
+  opponent: {
+    id: number;
+    name: string | null;
+    nameKo: string | null;
+    logo: string | null;
+  } | null;
+  venue: "HOME" | "AWAY";
+  scoreFor: number;
+  scoreAgainst: number;
+  result: "W" | "D" | "L";
+};
+
+export type StandingNextMatch = {
+  fixtureId: number;
+  fixtureDate: string | null;
+  opponent: {
+    id: number;
+    name: string | null;
+    nameKo: string | null;
+    logo: string | null;
+  } | null;
+  venue: "HOME" | "AWAY";
 };
 
 export type TeamStanding = {
@@ -516,6 +544,18 @@ export type TeamStanding = {
   home: StandingRecord | null;
   away: StandingRecord | null;
   recentForm: RecentForm | null;
+  liveMatch: StandingLiveMatch | null;
+  nextMatch: StandingNextMatch | null;
+};
+
+export type StandingLiveMatch = {
+  fixtureId: number;
+  scoreFor: number;
+  scoreAgainst: number;
+  statusShort: string | null;
+  elapsed: number | null;
+  extra: number | null;
+  result: "WINNING" | "DRAWING" | "LOSING";
 };
 
 export type HomeSummary = {
@@ -742,12 +782,14 @@ export async function fetchHomeSummary(season: number): Promise<HomeSummary> {
   return response.json();
 }
 
-export async function fetchStandings(season: number): Promise<TeamStanding[]> {
-  return cachedGetJson<TeamStanding[]>(
-    `/api/v1/teams/standings?season=${normalizeSeason(season)}`,
-    "순위 정보를 불러오지 못했습니다.",
-    DETAIL_CACHE_TTL_MS,
-  );
+export async function fetchStandings(
+  season: number,
+  options: { fresh?: boolean } = {},
+): Promise<TeamStanding[]> {
+  const url = `/api/v1/teams/standings?season=${normalizeSeason(season)}`;
+  return options.fresh
+    ? fetchFreshJson<TeamStanding[]>(url, "순위 정보를 불러오지 못했습니다.")
+    : cachedGetJson<TeamStanding[]>(url, "순위 정보를 불러오지 못했습니다.", DETAIL_CACHE_TTL_MS);
 
 }
 
@@ -997,6 +1039,22 @@ async function fetchJson<T>(url: string, fallbackMessage: string): Promise<T> {
       Accept: "application/json",
     },
     credentials: "same-origin",
+  });
+
+  if (!response.ok) {
+    throw new ApiError(`${fallbackMessage} (${response.status})`, response.status);
+  }
+
+  return response.json();
+}
+
+async function fetchFreshJson<T>(url: string, fallbackMessage: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+    },
+    credentials: "same-origin",
+    cache: "no-store",
   });
 
   if (!response.ok) {

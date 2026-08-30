@@ -1,6 +1,8 @@
 package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.fixture.entity.Fixture;
+import com.son.soccerStreaming.team.entity.TeamStanding;
+import com.son.soccerStreaming.team.repository.TeamStandingRepository;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -30,6 +32,7 @@ public class ApiFootballStandingLocalUpdateService {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final TeamStandingRepository teamStandingRepository;
 
     @Value("${api-football.sync.standings.local-finished-update-enabled:false}")
     private boolean localFinishedUpdateEnabled;
@@ -40,32 +43,49 @@ public class ApiFootballStandingLocalUpdateService {
     @Value("${api-football.sync.standings.season:2025}")
     private Integer season;
 
+    @Value("${api-football.sync.standings.league:39}")
+    private Integer league;
+
     @Value("${api-football.sync.standings.local-live-impact-ttl-hours:6}")
     private Long liveImpactTtlHours;
 
+    @Value("${api-football.sync.standings.local-finished-impact-ttl-hours:48}")
+    private Long finishedImpactTtlHours;
+
     public void applyFixtureState(Fixture fixture) {
-        if (!localUpdatesEnabled() || fixture.getHomeScore() == null || fixture.getAwayScore() == null) {
+        Integer impactSeason = fixture.getSeason() != null ? fixture.getSeason() : season;
+        Integer impactLeague = fixture.getLeagueId() != null ? fixture.getLeagueId() : league;
+        String statusShort = fixture.getStatusShort();
+
+        if (!isEnabledForStatus(statusShort)) {
+            deleteImpact(fixture.getFixtureId(), impactSeason);
             return;
         }
 
-        if (!isStandingImpactStatus(fixture.getStatusShort())) {
-            deleteImpact(fixture.getFixtureId(), season);
+        if (fixture.getHomeScore() == null || fixture.getAwayScore() == null) {
             return;
         }
+
+        Optional<LiveStandingImpact> existingImpact = findImpact(fixture.getFixtureId(), impactSeason);
+        PlayedBaseline baseline = resolvePlayedBaseline(fixture, impactLeague, impactSeason, existingImpact);
 
         saveImpact(new LiveStandingImpact(
                 fixture.getFixtureId(),
-                season,
+                impactSeason,
                 fixture.getHomeTeam().getTeamId(),
                 fixture.getAwayTeam().getTeamId(),
                 fixture.getHomeScore(),
                 fixture.getAwayScore(),
-                fixture.getStatusShort(),
+                statusShort,
+                fixture.getElapsed(),
+                fixture.getExtra(),
+                baseline.homePlayed(),
+                baseline.awayPlayed(),
                 LocalDateTime.now()
         ));
 
         log.debug("Standing live impact cached. fixtureId={}, season={}, status={}, score={}-{}",
-                fixture.getFixtureId(), season, fixture.getStatusShort(), fixture.getHomeScore(), fixture.getAwayScore());
+                fixture.getFixtureId(), impactSeason, statusShort, fixture.getHomeScore(), fixture.getAwayScore());
     }
 
     public List<LiveStandingImpact> findImpacts(Integer season) {
@@ -82,12 +102,86 @@ public class ApiFootballStandingLocalUpdateService {
         return impacts;
     }
 
-    private boolean localUpdatesEnabled() {
-        return localLiveUpdateEnabled || localFinishedUpdateEnabled;
+    public boolean hasFinishedImpacts(Integer season) {
+        return findImpacts(season).stream().anyMatch(impact -> isFinished(impact.getStatusShort()));
     }
 
-    private boolean isStandingImpactStatus(String statusShort) {
-        return isLive(statusShort) || isFinished(statusShort);
+    public void reconcileFinishedImpacts(Integer league, Integer season) {
+        for (LiveStandingImpact impact : findImpacts(season)) {
+            if (!isFinished(impact.getStatusShort())) {
+                continue;
+            }
+
+            if (!hasPlayedBaseline(impact)) {
+                log.warn("Removing legacy finished standing impact after authoritative sync. fixtureId={}, season={}",
+                        impact.getFixtureId(), season);
+                deleteImpact(impact.getFixtureId(), season);
+                continue;
+            }
+
+            Optional<TeamStanding> homeStanding = findStanding(impact.getHomeTeamId(), league, season);
+            Optional<TeamStanding> awayStanding = findStanding(impact.getAwayTeamId(), league, season);
+            if (homeStanding.isEmpty() || awayStanding.isEmpty()) {
+                continue;
+            }
+
+            if (hasPlayedMatch(homeStanding.get(), impact.getHomePlayedBefore())
+                    && hasPlayedMatch(awayStanding.get(), impact.getAwayPlayedBefore())) {
+                deleteImpact(impact.getFixtureId(), season);
+                log.info("Finished standing impact removed after authoritative standings reflected fixture. " +
+                                "fixtureId={}, season={}, homePlayed={}->{}, awayPlayed={}->{}",
+                        impact.getFixtureId(), season,
+                        impact.getHomePlayedBefore(), homeStanding.get().getPlayed(),
+                        impact.getAwayPlayedBefore(), awayStanding.get().getPlayed());
+            }
+        }
+    }
+
+    public boolean isReflected(LiveStandingImpact impact, Integer homePlayed, Integer awayPlayed) {
+        return hasPlayedBaseline(impact)
+                && valueOf(homePlayed) >= impact.getHomePlayedBefore() + 1
+                && valueOf(awayPlayed) >= impact.getAwayPlayedBefore() + 1;
+    }
+
+    public boolean isLiveImpact(LiveStandingImpact impact) {
+        return isLive(impact.getStatusShort());
+    }
+
+    private boolean isEnabledForStatus(String statusShort) {
+        return (isLive(statusShort) && localLiveUpdateEnabled)
+                || (isFinished(statusShort) && localFinishedUpdateEnabled);
+    }
+
+    private PlayedBaseline resolvePlayedBaseline(Fixture fixture, Integer league, Integer season,
+                                                 Optional<LiveStandingImpact> existingImpact) {
+        if (existingImpact.isPresent() && hasPlayedBaseline(existingImpact.get())) {
+            LiveStandingImpact impact = existingImpact.get();
+            return new PlayedBaseline(impact.getHomePlayedBefore(), impact.getAwayPlayedBefore());
+        }
+
+        Integer homePlayed = findStanding(fixture.getHomeTeam().getTeamId(), league, season)
+                .map(standing -> valueOf(standing.getPlayed()))
+                .orElse(null);
+        Integer awayPlayed = findStanding(fixture.getAwayTeam().getTeamId(), league, season)
+                .map(standing -> valueOf(standing.getPlayed()))
+                .orElse(null);
+        return new PlayedBaseline(homePlayed, awayPlayed);
+    }
+
+    private Optional<TeamStanding> findStanding(Long teamId, Integer league, Integer season) {
+        return teamStandingRepository.findByTeamTeamIdAndLeagueIdAndSeason(teamId, league, season);
+    }
+
+    private boolean hasPlayedMatch(TeamStanding standing, Integer playedBefore) {
+        return valueOf(standing.getPlayed()) >= playedBefore + 1;
+    }
+
+    private boolean hasPlayedBaseline(LiveStandingImpact impact) {
+        return impact.getHomePlayedBefore() != null && impact.getAwayPlayedBefore() != null;
+    }
+
+    private int valueOf(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private boolean isLive(String statusShort) {
@@ -127,10 +221,13 @@ public class ApiFootballStandingLocalUpdateService {
     private void saveImpact(LiveStandingImpact impact) {
         try {
             String impactJson = objectMapper.writeValueAsString(impact);
+            long ttlHours = isFinished(impact.getStatusShort())
+                    ? finishedImpactTtlHours
+                    : liveImpactTtlHours;
             redisTemplate.opsForValue().set(
                     liveImpactKey(impact.getFixtureId(), impact.getSeason()),
                     impactJson,
-                    Duration.ofHours(liveImpactTtlHours)
+                    Duration.ofHours(ttlHours)
             );
         } catch (JacksonException e) {
             log.error("Failed to serialize Redis standing live impact. fixtureId={}, season={}",
@@ -146,6 +243,9 @@ public class ApiFootballStandingLocalUpdateService {
         return LIVE_IMPACT_KEY.formatted(season, fixtureId);
     }
 
+    private record PlayedBaseline(Integer homePlayed, Integer awayPlayed) {
+    }
+
     @Getter
     @NoArgsConstructor(access = AccessLevel.PRIVATE)
     @AllArgsConstructor
@@ -157,6 +257,10 @@ public class ApiFootballStandingLocalUpdateService {
         private Integer homeScore;
         private Integer awayScore;
         private String statusShort;
+        private Integer elapsed;
+        private Integer extra;
+        private Integer homePlayedBefore;
+        private Integer awayPlayedBefore;
         private LocalDateTime appliedAt;
     }
 }
