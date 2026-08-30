@@ -2,8 +2,10 @@ package com.son.soccerStreaming.team.service;
 
 import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService;
 import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService.LiveStandingImpact;
+import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService.StandingBaseline;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.fixture.repository.FixtureRepository;
+import com.son.soccerStreaming.global.util.DateTimeUtils;
 import com.son.soccerStreaming.media.service.MediaUrlService;
 import com.son.soccerStreaming.team.dto.TeamStandingResponseDto;
 import com.son.soccerStreaming.team.entity.Team;
@@ -15,11 +17,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -43,17 +48,28 @@ public class TeamStandingService {
                 .map(standing -> StandingProjection.from(standing, mediaUrlService))
                 .toList();
 
-        applyLiveImpacts(projections, apiFootballStandingLocalUpdateService.findImpacts(season));
+        Map<Long, TeamStandingResponseDto.LiveMatch> liveMatches = applyLiveImpacts(
+                projections,
+                apiFootballStandingLocalUpdateService.findImpacts(season)
+        );
         refreshRanks(projections);
         Map<Long, RecentFormProjection> recentForms = findRecentForms(season, projections);
+        Map<Long, TeamStandingResponseDto.NextMatch> nextMatches = findNextMatches(season, projections);
 
         return projections.stream()
                 .sorted(Comparator.comparing(StandingProjection::getRank, Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(standing -> toResponse(standing, recentForms.get(standing.getTeamId())))
+                .map(standing -> toResponse(
+                        standing,
+                        recentForms.get(standing.getTeamId()),
+                        liveMatches.get(standing.getTeamId()),
+                        nextMatches.get(standing.getTeamId())
+                ))
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private TeamStandingResponseDto toResponse(StandingProjection standing, RecentFormProjection recentForm) {
+    private TeamStandingResponseDto toResponse(StandingProjection standing, RecentFormProjection recentForm,
+                                               TeamStandingResponseDto.LiveMatch liveMatch,
+                                               TeamStandingResponseDto.NextMatch nextMatch) {
         return TeamStandingResponseDto.builder()
                 .season(standing.getSeason())
                 .rank(standing.getRank())
@@ -94,8 +110,66 @@ public class TeamStandingService {
                         standing.getAwayGoalsAgainst()
                 ))
                 .recentForm(toRecentForm(recentForm))
+                .liveMatch(liveMatch)
+                .nextMatch(nextMatch)
                 .updatedAt(standing.getUpdatedAt())
                 .build();
+    }
+
+    private Map<Long, TeamStandingResponseDto.NextMatch> findNextMatches(
+            Integer season,
+            List<StandingProjection> standings
+    ) {
+        Set<Long> standingTeamIds = standings.stream()
+                .map(StandingProjection::getTeamId)
+                .collect(Collectors.toCollection(HashSet::new));
+        Map<Long, TeamStandingResponseDto.NextMatch> nextMatches = new HashMap<>();
+
+        if (standingTeamIds.isEmpty()) {
+            return nextMatches;
+        }
+
+        List<Fixture> upcomingFixtures = fixtureRepository.findUpcomingScheduledByLeagueAndSeason(
+                PREMIER_LEAGUE_ID,
+                season,
+                LocalDateTime.now(ZoneOffset.UTC)
+        );
+
+        for (Fixture fixture : upcomingFixtures) {
+            putNextMatchIfAbsent(nextMatches, standingTeamIds, fixture, fixture.getHomeTeam(), fixture.getAwayTeam(), "HOME");
+            putNextMatchIfAbsent(nextMatches, standingTeamIds, fixture, fixture.getAwayTeam(), fixture.getHomeTeam(), "AWAY");
+
+            if (nextMatches.size() == standingTeamIds.size()) {
+                break;
+            }
+        }
+
+        return nextMatches;
+    }
+
+    private void putNextMatchIfAbsent(
+            Map<Long, TeamStandingResponseDto.NextMatch> nextMatches,
+            Set<Long> standingTeamIds,
+            Fixture fixture,
+            Team team,
+            Team opponent,
+            String venue
+    ) {
+        if (!standingTeamIds.contains(team.getTeamId())) {
+            return;
+        }
+
+        nextMatches.putIfAbsent(team.getTeamId(), TeamStandingResponseDto.NextMatch.builder()
+                .fixtureId(fixture.getFixtureId())
+                .fixtureDate(DateTimeUtils.utcToKorea(fixture.getFixtureDate()))
+                .opponent(TeamStandingResponseDto.TeamInfo.builder()
+                        .id(opponent.getTeamId())
+                        .name(opponent.getName())
+                        .nameKo(opponent.getKoreanName())
+                        .logo(mediaUrlService.teamLogoUrl(opponent))
+                        .build())
+                .venue(venue)
+                .build());
     }
 
     private Map<Long, RecentFormProjection> findRecentForms(Integer season, List<StandingProjection> standings) {
@@ -115,18 +189,75 @@ public class TeamStandingService {
 
         RecentFormProjection homeForm = recentForms.get(homeTeamId);
         if (homeForm != null && homeForm.canApply()) {
-            homeForm.apply(fixture.getHomeScore(), fixture.getAwayScore());
+            homeForm.apply(
+                    fixture.getHomeScore(),
+                    fixture.getAwayScore(),
+                    toRecentMatch(fixture, fixture.getAwayTeam(), "HOME",
+                            fixture.getHomeScore(), fixture.getAwayScore())
+            );
         }
 
         RecentFormProjection awayForm = recentForms.get(awayTeamId);
         if (awayForm != null && awayForm.canApply()) {
-            awayForm.apply(fixture.getAwayScore(), fixture.getHomeScore());
+            awayForm.apply(
+                    fixture.getAwayScore(),
+                    fixture.getHomeScore(),
+                    toRecentMatch(fixture, fixture.getHomeTeam(), "AWAY",
+                            fixture.getAwayScore(), fixture.getHomeScore())
+            );
         }
     }
 
-    private void applyLiveImpacts(List<StandingProjection> standings, List<LiveStandingImpact> impacts) {
+    private TeamStandingResponseDto.RecentMatch toRecentMatch(
+            Fixture fixture,
+            Team opponent,
+            String venue,
+            Integer scoreFor,
+            Integer scoreAgainst
+    ) {
+        return TeamStandingResponseDto.RecentMatch.builder()
+                .fixtureId(fixture.getFixtureId())
+                .fixtureDate(DateTimeUtils.utcToKorea(fixture.getFixtureDate()))
+                .opponent(TeamStandingResponseDto.TeamInfo.builder()
+                        .id(opponent.getTeamId())
+                        .name(opponent.getName())
+                        .nameKo(opponent.getKoreanName())
+                        .logo(mediaUrlService.teamLogoUrl(opponent))
+                        .build())
+                .venue(venue)
+                .scoreFor(scoreFor)
+                .scoreAgainst(scoreAgainst)
+                .result(recentResultOf(scoreFor, scoreAgainst))
+                .build();
+    }
+
+    private String recentResultOf(Integer scoreFor, Integer scoreAgainst) {
+        if (scoreFor > scoreAgainst) {
+            return "W";
+        }
+        if (scoreFor < scoreAgainst) {
+            return "L";
+        }
+        return "D";
+    }
+
+    private Map<Long, TeamStandingResponseDto.LiveMatch> applyLiveImpacts(
+            List<StandingProjection> standings,
+            List<LiveStandingImpact> impacts
+    ) {
         Map<Long, StandingProjection> standingsByTeamId = standings.stream()
                 .collect(Collectors.toMap(StandingProjection::getTeamId, Function.identity()));
+        Map<Long, StandingBaseline> authoritativeHomeStandings = standings.stream()
+                .collect(Collectors.toMap(
+                        StandingProjection::getTeamId,
+                        standing -> toStandingBaseline(standing, true)
+                ));
+        Map<Long, StandingBaseline> authoritativeAwayStandings = standings.stream()
+                .collect(Collectors.toMap(
+                        StandingProjection::getTeamId,
+                        standing -> toStandingBaseline(standing, false)
+                ));
+        Map<Long, TeamStandingResponseDto.LiveMatch> liveMatches = new HashMap<>();
 
         for (LiveStandingImpact impact : impacts) {
             StandingProjection home = standingsByTeamId.get(impact.getHomeTeamId());
@@ -135,9 +266,78 @@ public class TeamStandingService {
                 continue;
             }
 
+            if (apiFootballStandingLocalUpdateService.isLiveImpact(impact)) {
+                liveMatches.put(impact.getHomeTeamId(), toLiveMatch(
+                        impact,
+                        impact.getHomeScore(),
+                        impact.getAwayScore()
+                ));
+                liveMatches.put(impact.getAwayTeamId(), toLiveMatch(
+                        impact,
+                        impact.getAwayScore(),
+                        impact.getHomeScore()
+                ));
+            }
+
+            if (apiFootballStandingLocalUpdateService.isReflected(
+                    impact,
+                    authoritativeHomeStandings.get(impact.getHomeTeamId()),
+                    authoritativeAwayStandings.get(impact.getAwayTeamId())
+            )) {
+                continue;
+            }
+
             home.applyMatchResult(true, impact.getHomeScore(), impact.getAwayScore(), impact.getAppliedAt());
             away.applyMatchResult(false, impact.getAwayScore(), impact.getHomeScore(), impact.getAppliedAt());
         }
+
+        return liveMatches;
+    }
+
+    private StandingBaseline toStandingBaseline(StandingProjection standing, boolean homeSide) {
+        return StandingBaseline.builder()
+                .played(standingValueOf(standing.getPlayed()))
+                .points(standingValueOf(standing.getPoints()))
+                .win(standingValueOf(standing.getWin()))
+                .draw(standingValueOf(standing.getDraw()))
+                .lose(standingValueOf(standing.getLose()))
+                .goalsFor(standingValueOf(standing.getGoalsFor()))
+                .goalsAgainst(standingValueOf(standing.getGoalsAgainst()))
+                .venuePlayed(standingValueOf(homeSide ? standing.getHomePlayed() : standing.getAwayPlayed()))
+                .venueWin(standingValueOf(homeSide ? standing.getHomeWin() : standing.getAwayWin()))
+                .venueDraw(standingValueOf(homeSide ? standing.getHomeDraw() : standing.getAwayDraw()))
+                .venueLose(standingValueOf(homeSide ? standing.getHomeLose() : standing.getAwayLose()))
+                .venueGoalsFor(standingValueOf(homeSide ? standing.getHomeGoalsFor() : standing.getAwayGoalsFor()))
+                .venueGoalsAgainst(standingValueOf(homeSide ? standing.getHomeGoalsAgainst() : standing.getAwayGoalsAgainst()))
+                .apiUpdatedAt(standing.getUpdatedAt())
+                .build();
+    }
+
+    private int standingValueOf(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private TeamStandingResponseDto.LiveMatch toLiveMatch(LiveStandingImpact impact,
+                                                          Integer scoreFor, Integer scoreAgainst) {
+        return TeamStandingResponseDto.LiveMatch.builder()
+                .fixtureId(impact.getFixtureId())
+                .scoreFor(scoreFor)
+                .scoreAgainst(scoreAgainst)
+                .statusShort(impact.getStatusShort())
+                .elapsed(impact.getElapsed())
+                .extra(impact.getExtra())
+                .result(resultOf(scoreFor, scoreAgainst))
+                .build();
+    }
+
+    private String resultOf(Integer scoreFor, Integer scoreAgainst) {
+        if (scoreFor > scoreAgainst) {
+            return "WINNING";
+        }
+        if (scoreFor < scoreAgainst) {
+            return "LOSING";
+        }
+        return "DRAWING";
     }
 
     private void refreshRanks(List<StandingProjection> standings) {
@@ -182,6 +382,7 @@ public class TeamStandingService {
                 .points(form.getPoints())
                 .goalsDiff(form.getGoalsDiff())
                 .results(form.getResults())
+                .matches(form.getMatches())
                 .build();
     }
 
@@ -322,12 +523,13 @@ public class TeamStandingService {
         private int goalsAgainst;
         private int points;
         private final List<String> results = new ArrayList<>();
+        private final List<TeamStandingResponseDto.RecentMatch> matches = new ArrayList<>();
 
         boolean canApply() {
             return played < MAX_RECENT_MATCHES;
         }
 
-        void apply(int goalsFor, int goalsAgainst) {
+        void apply(int goalsFor, int goalsAgainst, TeamStandingResponseDto.RecentMatch match) {
             if (!canApply()) {
                 return;
             }
@@ -348,6 +550,7 @@ public class TeamStandingService {
                 this.lose++;
                 this.results.add("L");
             }
+            this.matches.add(match);
         }
 
         int getGoalsDiff() {

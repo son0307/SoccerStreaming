@@ -1416,6 +1416,52 @@ h2 {
   text-align: left;
 }
 
+.standings-table .team-cell .team-name-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.standing-live-score {
+  display: inline-grid;
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 34px;
+  height: 22px;
+  padding: 0 6px;
+  place-items: center;
+  border-radius: 5px;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.standing-live-score:hover {
+  filter: brightness(0.9);
+  transform: translateY(-1px);
+}
+
+.standing-live-score:focus-visible {
+  outline: 2px solid #162018;
+  outline-offset: 2px;
+}
+
+.standing-live-score.winning {
+  background: #00a86b;
+}
+
+.standing-live-score.drawing {
+  background: #8f9a93;
+}
+
+.standing-live-score.losing {
+  background: #ef4444;
+}
+
 .player-rankings-page {
   gap: 16px;
 }
@@ -1718,11 +1764,47 @@ h2 {
 
 .result-chips {
   display: inline-flex;
+  align-items: center;
   gap: 5px;
+}
+
+.standing-next-match {
+  display: inline-grid;
+  position: relative;
+  width: 30px;
+  height: 28px;
+  place-items: center;
+  text-decoration: none;
+}
+
+.standing-next-match img,
+.standing-next-match-placeholder {
+  display: block;
+  width: 21px;
+  height: 21px;
+  object-fit: contain;
+}
+
+.standing-next-match-placeholder {
+  border-radius: 50%;
+  background: #dfe7df;
+}
+
+.standing-next-match:hover .result-chip-tooltip,
+.standing-next-match:focus-visible .result-chip-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.standing-next-match:focus-visible {
+  outline: 2px solid #162018;
+  outline-offset: 2px;
 }
 
 .result-chip {
   display: inline-grid;
+  position: relative;
   width: 24px;
   height: 24px;
   place-items: center;
@@ -1731,6 +1813,42 @@ h2 {
   color: #ffffff;
   font-size: 0.76rem;
   font-weight: 900;
+  text-decoration: none;
+}
+
+.result-chip-tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 20;
+  width: max-content;
+  max-width: 360px;
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: #252825;
+  box-shadow: 0 6px 18px rgba(13, 25, 16, 0.2);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.result-chip:hover .result-chip-tooltip,
+.result-chip:focus-visible .result-chip-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.result-chip:focus-visible {
+  outline: 2px solid #162018;
+  outline-offset: 2px;
 }
 
 .result-chip:first-child {
@@ -3189,6 +3307,18 @@ h2 {
 .detail-stats-stack {
   display: grid;
   gap: 16px;
+}
+
+.live-stats-delay-notice {
+  margin: 0;
+  border: 1px solid #ead59a;
+  border-radius: 8px;
+  background: #fff9e8;
+  padding: 11px 14px;
+  color: #765b12;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.5;
 }
 
 .team-stat-comparison {

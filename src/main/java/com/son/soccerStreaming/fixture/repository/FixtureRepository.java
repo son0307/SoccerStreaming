@@ -111,6 +111,19 @@ public interface FixtureRepository extends JpaRepository<Fixture, Long>, Fixture
 
     @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
     @Query("SELECT f FROM Fixture f " +
+            "WHERE f.leagueId = :leagueId " +
+            "AND f.season = :season " +
+            "AND f.fixtureStatus = 'SCHEDULED' " +
+            "AND f.fixtureDate > :now " +
+            "ORDER BY f.fixtureDate ASC, f.fixtureId ASC")
+    List<Fixture> findUpcomingScheduledByLeagueAndSeason(
+            @Param("leagueId") Integer leagueId,
+            @Param("season") Integer season,
+            @Param("now") LocalDateTime now
+    );
+
+    @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
+    @Query("SELECT f FROM Fixture f " +
             "WHERE f.season = :season " +
             "AND (f.homeTeam.teamId = :teamId OR f.awayTeam.teamId = :teamId) " +
             "AND f.fixtureStatus = 'LIVE' " +
