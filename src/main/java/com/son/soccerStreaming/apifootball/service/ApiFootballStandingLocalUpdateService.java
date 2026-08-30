@@ -5,6 +5,7 @@ import com.son.soccerStreaming.team.entity.TeamStanding;
 import com.son.soccerStreaming.team.repository.TeamStandingRepository;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
@@ -67,7 +68,7 @@ public class ApiFootballStandingLocalUpdateService {
         }
 
         Optional<LiveStandingImpact> existingImpact = findImpact(fixture.getFixtureId(), impactSeason);
-        PlayedBaseline baseline = resolvePlayedBaseline(fixture, impactLeague, impactSeason, existingImpact);
+        BaselinePair baseline = resolveBaselines(fixture, impactLeague, impactSeason, existingImpact);
 
         saveImpact(new LiveStandingImpact(
                 fixture.getFixtureId(),
@@ -79,9 +80,11 @@ public class ApiFootballStandingLocalUpdateService {
                 statusShort,
                 fixture.getElapsed(),
                 fixture.getExtra(),
-                baseline.homePlayed(),
-                baseline.awayPlayed(),
-                LocalDateTime.now()
+                baseline.home() != null ? baseline.home().getPlayed() : null,
+                baseline.away() != null ? baseline.away().getPlayed() : null,
+                LocalDateTime.now(),
+                baseline.home(),
+                baseline.away()
         ));
 
         log.debug("Standing live impact cached. fixtureId={}, season={}, status={}, score={}-{}",
@@ -112,10 +115,9 @@ public class ApiFootballStandingLocalUpdateService {
                 continue;
             }
 
-            if (!hasPlayedBaseline(impact)) {
-                log.warn("Removing legacy finished standing impact after authoritative sync. fixtureId={}, season={}",
-                        impact.getFixtureId(), season);
-                deleteImpact(impact.getFixtureId(), season);
+            if (!hasDetailedBaseline(impact)) {
+                log.warn("Keeping legacy finished standing impact until TTL because detailed baseline is missing. " +
+                                "fixtureId={}, season={}", impact.getFixtureId(), season);
                 continue;
             }
 
@@ -125,22 +127,24 @@ public class ApiFootballStandingLocalUpdateService {
                 continue;
             }
 
-            if (hasPlayedMatch(homeStanding.get(), impact.getHomePlayedBefore())
-                    && hasPlayedMatch(awayStanding.get(), impact.getAwayPlayedBefore())) {
+            StandingBaseline currentHome = toBaseline(homeStanding.get(), true);
+            StandingBaseline currentAway = toBaseline(awayStanding.get(), false);
+            if (isReflected(impact, currentHome, currentAway)) {
                 deleteImpact(impact.getFixtureId(), season);
                 log.info("Finished standing impact removed after authoritative standings reflected fixture. " +
-                                "fixtureId={}, season={}, homePlayed={}->{}, awayPlayed={}->{}",
-                        impact.getFixtureId(), season,
-                        impact.getHomePlayedBefore(), homeStanding.get().getPlayed(),
-                        impact.getAwayPlayedBefore(), awayStanding.get().getPlayed());
+                                "fixtureId={}, season={}", impact.getFixtureId(), season);
             }
         }
     }
 
-    public boolean isReflected(LiveStandingImpact impact, Integer homePlayed, Integer awayPlayed) {
-        return hasPlayedBaseline(impact)
-                && valueOf(homePlayed) >= impact.getHomePlayedBefore() + 1
-                && valueOf(awayPlayed) >= impact.getAwayPlayedBefore() + 1;
+    public boolean isReflected(LiveStandingImpact impact,
+                               StandingBaseline currentHome,
+                               StandingBaseline currentAway) {
+        return hasDetailedBaseline(impact)
+                && includesFixtureResult(currentHome, impact.getHomeBaseline(),
+                impact.getHomeScore(), impact.getAwayScore())
+                && includesFixtureResult(currentAway, impact.getAwayBaseline(),
+                impact.getAwayScore(), impact.getHomeScore());
     }
 
     public boolean isLiveImpact(LiveStandingImpact impact) {
@@ -152,32 +156,88 @@ public class ApiFootballStandingLocalUpdateService {
                 || (isFinished(statusShort) && localFinishedUpdateEnabled);
     }
 
-    private PlayedBaseline resolvePlayedBaseline(Fixture fixture, Integer league, Integer season,
-                                                 Optional<LiveStandingImpact> existingImpact) {
-        if (existingImpact.isPresent() && hasPlayedBaseline(existingImpact.get())) {
+    private BaselinePair resolveBaselines(Fixture fixture, Integer league, Integer season,
+                                          Optional<LiveStandingImpact> existingImpact) {
+        if (existingImpact.isPresent() && hasDetailedBaseline(existingImpact.get())) {
             LiveStandingImpact impact = existingImpact.get();
-            return new PlayedBaseline(impact.getHomePlayedBefore(), impact.getAwayPlayedBefore());
+            return new BaselinePair(impact.getHomeBaseline(), impact.getAwayBaseline());
         }
 
-        Integer homePlayed = findStanding(fixture.getHomeTeam().getTeamId(), league, season)
-                .map(standing -> valueOf(standing.getPlayed()))
+        StandingBaseline home = findStanding(fixture.getHomeTeam().getTeamId(), league, season)
+                .map(standing -> toBaseline(standing, true))
                 .orElse(null);
-        Integer awayPlayed = findStanding(fixture.getAwayTeam().getTeamId(), league, season)
-                .map(standing -> valueOf(standing.getPlayed()))
+        StandingBaseline away = findStanding(fixture.getAwayTeam().getTeamId(), league, season)
+                .map(standing -> toBaseline(standing, false))
                 .orElse(null);
-        return new PlayedBaseline(homePlayed, awayPlayed);
+        return new BaselinePair(home, away);
     }
 
     private Optional<TeamStanding> findStanding(Long teamId, Integer league, Integer season) {
         return teamStandingRepository.findByTeamTeamIdAndLeagueIdAndSeason(teamId, league, season);
     }
 
-    private boolean hasPlayedMatch(TeamStanding standing, Integer playedBefore) {
-        return valueOf(standing.getPlayed()) >= playedBefore + 1;
+    private StandingBaseline toBaseline(TeamStanding standing, boolean homeSide) {
+        return StandingBaseline.builder()
+                .played(valueOf(standing.getPlayed()))
+                .points(valueOf(standing.getPoints()))
+                .win(valueOf(standing.getWin()))
+                .draw(valueOf(standing.getDraw()))
+                .lose(valueOf(standing.getLose()))
+                .goalsFor(valueOf(standing.getGoalsFor()))
+                .goalsAgainst(valueOf(standing.getGoalsAgainst()))
+                .venuePlayed(valueOf(homeSide ? standing.getHomePlayed() : standing.getAwayPlayed()))
+                .venueWin(valueOf(homeSide ? standing.getHomeWin() : standing.getAwayWin()))
+                .venueDraw(valueOf(homeSide ? standing.getHomeDraw() : standing.getAwayDraw()))
+                .venueLose(valueOf(homeSide ? standing.getHomeLose() : standing.getAwayLose()))
+                .venueGoalsFor(valueOf(homeSide ? standing.getHomeGoalsFor() : standing.getAwayGoalsFor()))
+                .venueGoalsAgainst(valueOf(homeSide ? standing.getHomeGoalsAgainst() : standing.getAwayGoalsAgainst()))
+                .apiUpdatedAt(standing.getApiUpdatedAt())
+                .build();
     }
 
-    private boolean hasPlayedBaseline(LiveStandingImpact impact) {
-        return impact.getHomePlayedBefore() != null && impact.getAwayPlayedBefore() != null;
+    private boolean includesFixtureResult(StandingBaseline current, StandingBaseline baseline,
+                                          int goalsFor, int goalsAgainst) {
+        if (current == null || baseline == null || !isUpdatedAfterBaseline(current, baseline)) {
+            return false;
+        }
+
+        boolean win = goalsFor > goalsAgainst;
+        boolean draw = goalsFor == goalsAgainst;
+        boolean lose = goalsFor < goalsAgainst;
+        return hasIncreasedBy(current.getPlayed(), baseline.getPlayed(), 1)
+                && hasIncreasedBy(current.getPoints(), baseline.getPoints(), pointsFor(goalsFor, goalsAgainst))
+                && hasIncreasedBy(current.getWin(), baseline.getWin(), win ? 1 : 0)
+                && hasIncreasedBy(current.getDraw(), baseline.getDraw(), draw ? 1 : 0)
+                && hasIncreasedBy(current.getLose(), baseline.getLose(), lose ? 1 : 0)
+                && hasIncreasedBy(current.getGoalsFor(), baseline.getGoalsFor(), goalsFor)
+                && hasIncreasedBy(current.getGoalsAgainst(), baseline.getGoalsAgainst(), goalsAgainst)
+                && hasIncreasedBy(current.getVenuePlayed(), baseline.getVenuePlayed(), 1)
+                && hasIncreasedBy(current.getVenueWin(), baseline.getVenueWin(), win ? 1 : 0)
+                && hasIncreasedBy(current.getVenueDraw(), baseline.getVenueDraw(), draw ? 1 : 0)
+                && hasIncreasedBy(current.getVenueLose(), baseline.getVenueLose(), lose ? 1 : 0)
+                && hasIncreasedBy(current.getVenueGoalsFor(), baseline.getVenueGoalsFor(), goalsFor)
+                && hasIncreasedBy(current.getVenueGoalsAgainst(), baseline.getVenueGoalsAgainst(), goalsAgainst);
+    }
+
+    private boolean isUpdatedAfterBaseline(StandingBaseline current, StandingBaseline baseline) {
+        return baseline.getApiUpdatedAt() == null
+                || (current.getApiUpdatedAt() != null
+                && current.getApiUpdatedAt().isAfter(baseline.getApiUpdatedAt()));
+    }
+
+    private boolean hasDetailedBaseline(LiveStandingImpact impact) {
+        return impact.getHomeBaseline() != null && impact.getAwayBaseline() != null;
+    }
+
+    private boolean hasIncreasedBy(Integer current, Integer baseline, int delta) {
+        return current != null && baseline != null && current >= baseline + delta;
+    }
+
+    private int pointsFor(int goalsFor, int goalsAgainst) {
+        if (goalsFor > goalsAgainst) {
+            return 3;
+        }
+        return goalsFor == goalsAgainst ? 1 : 0;
     }
 
     private int valueOf(Integer value) {
@@ -243,7 +303,28 @@ public class ApiFootballStandingLocalUpdateService {
         return LIVE_IMPACT_KEY.formatted(season, fixtureId);
     }
 
-    private record PlayedBaseline(Integer homePlayed, Integer awayPlayed) {
+    private record BaselinePair(StandingBaseline home, StandingBaseline away) {
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor(access = AccessLevel.PRIVATE)
+    @AllArgsConstructor
+    public static class StandingBaseline {
+        private Integer played;
+        private Integer points;
+        private Integer win;
+        private Integer draw;
+        private Integer lose;
+        private Integer goalsFor;
+        private Integer goalsAgainst;
+        private Integer venuePlayed;
+        private Integer venueWin;
+        private Integer venueDraw;
+        private Integer venueLose;
+        private Integer venueGoalsFor;
+        private Integer venueGoalsAgainst;
+        private LocalDateTime apiUpdatedAt;
     }
 
     @Getter
@@ -262,5 +343,15 @@ public class ApiFootballStandingLocalUpdateService {
         private Integer homePlayedBefore;
         private Integer awayPlayedBefore;
         private LocalDateTime appliedAt;
+        private StandingBaseline homeBaseline;
+        private StandingBaseline awayBaseline;
+
+        public LiveStandingImpact(Long fixtureId, Integer season, Long homeTeamId, Long awayTeamId,
+                                  Integer homeScore, Integer awayScore, String statusShort,
+                                  Integer elapsed, Integer extra, Integer homePlayedBefore,
+                                  Integer awayPlayedBefore, LocalDateTime appliedAt) {
+            this(fixtureId, season, homeTeamId, awayTeamId, homeScore, awayScore, statusShort,
+                    elapsed, extra, homePlayedBefore, awayPlayedBefore, appliedAt, null, null);
+        }
     }
 }

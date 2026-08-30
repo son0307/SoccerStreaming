@@ -788,7 +788,11 @@ export async function fetchStandings(
 ): Promise<TeamStanding[]> {
   const url = `/api/v1/teams/standings?season=${normalizeSeason(season)}`;
   return options.fresh
-    ? fetchFreshJson<TeamStanding[]>(url, "순위 정보를 불러오지 못했습니다.")
+    ? fetchFreshJsonWithCacheFallback<TeamStanding[]>(
+        url,
+        "순위 정보를 불러오지 못했습니다.",
+        DETAIL_CACHE_TTL_MS,
+      )
     : cachedGetJson<TeamStanding[]>(url, "순위 정보를 불러오지 못했습니다.", DETAIL_CACHE_TTL_MS);
 
 }
@@ -1062,6 +1066,28 @@ async function fetchFreshJson<T>(url: string, fallbackMessage: string): Promise<
   }
 
   return response.json();
+}
+
+async function fetchFreshJsonWithCacheFallback<T>(
+  url: string,
+  fallbackMessage: string,
+  ttlMs: number,
+): Promise<T> {
+  const cached = memoryCache.get(url) as CacheEntry<T> | undefined;
+
+  try {
+    const value = await fetchFreshJson<T>(url, fallbackMessage);
+    memoryCache.set(url, {
+      expiresAt: Date.now() + ttlMs,
+      value,
+    });
+    return value;
+  } catch (error) {
+    if (cached) {
+      return cached.value;
+    }
+    throw error;
+  }
 }
     
 export async function updateNickname(nickname: string): Promise<CurrentUser> {

@@ -2,6 +2,7 @@ package com.son.soccerStreaming.team.service;
 
 import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService;
 import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService.LiveStandingImpact;
+import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService.StandingBaseline;
 import com.son.soccerStreaming.fixture.entity.Fixture;
 import com.son.soccerStreaming.fixture.repository.FixtureRepository;
 import com.son.soccerStreaming.global.util.DateTimeUtils;
@@ -246,10 +247,15 @@ public class TeamStandingService {
     ) {
         Map<Long, StandingProjection> standingsByTeamId = standings.stream()
                 .collect(Collectors.toMap(StandingProjection::getTeamId, Function.identity()));
-        Map<Long, Integer> authoritativePlayedByTeamId = standings.stream()
+        Map<Long, StandingBaseline> authoritativeHomeStandings = standings.stream()
                 .collect(Collectors.toMap(
                         StandingProjection::getTeamId,
-                        standing -> standing.getPlayed() == null ? 0 : standing.getPlayed()
+                        standing -> toStandingBaseline(standing, true)
+                ));
+        Map<Long, StandingBaseline> authoritativeAwayStandings = standings.stream()
+                .collect(Collectors.toMap(
+                        StandingProjection::getTeamId,
+                        standing -> toStandingBaseline(standing, false)
                 ));
         Map<Long, TeamStandingResponseDto.LiveMatch> liveMatches = new HashMap<>();
 
@@ -275,8 +281,8 @@ public class TeamStandingService {
 
             if (apiFootballStandingLocalUpdateService.isReflected(
                     impact,
-                    authoritativePlayedByTeamId.get(impact.getHomeTeamId()),
-                    authoritativePlayedByTeamId.get(impact.getAwayTeamId())
+                    authoritativeHomeStandings.get(impact.getHomeTeamId()),
+                    authoritativeAwayStandings.get(impact.getAwayTeamId())
             )) {
                 continue;
             }
@@ -286,6 +292,29 @@ public class TeamStandingService {
         }
 
         return liveMatches;
+    }
+
+    private StandingBaseline toStandingBaseline(StandingProjection standing, boolean homeSide) {
+        return StandingBaseline.builder()
+                .played(standingValueOf(standing.getPlayed()))
+                .points(standingValueOf(standing.getPoints()))
+                .win(standingValueOf(standing.getWin()))
+                .draw(standingValueOf(standing.getDraw()))
+                .lose(standingValueOf(standing.getLose()))
+                .goalsFor(standingValueOf(standing.getGoalsFor()))
+                .goalsAgainst(standingValueOf(standing.getGoalsAgainst()))
+                .venuePlayed(standingValueOf(homeSide ? standing.getHomePlayed() : standing.getAwayPlayed()))
+                .venueWin(standingValueOf(homeSide ? standing.getHomeWin() : standing.getAwayWin()))
+                .venueDraw(standingValueOf(homeSide ? standing.getHomeDraw() : standing.getAwayDraw()))
+                .venueLose(standingValueOf(homeSide ? standing.getHomeLose() : standing.getAwayLose()))
+                .venueGoalsFor(standingValueOf(homeSide ? standing.getHomeGoalsFor() : standing.getAwayGoalsFor()))
+                .venueGoalsAgainst(standingValueOf(homeSide ? standing.getHomeGoalsAgainst() : standing.getAwayGoalsAgainst()))
+                .apiUpdatedAt(standing.getUpdatedAt())
+                .build();
+    }
+
+    private int standingValueOf(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private TeamStandingResponseDto.LiveMatch toLiveMatch(LiveStandingImpact impact,

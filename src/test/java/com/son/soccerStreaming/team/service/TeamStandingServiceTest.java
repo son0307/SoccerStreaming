@@ -176,7 +176,9 @@ class TeamStandingServiceTest {
         ));
         when(apiFootballStandingLocalUpdateService.findImpacts(2025)).thenReturn(List.of(impact));
         when(apiFootballStandingLocalUpdateService.isLiveImpact(impact)).thenReturn(true);
-        when(apiFootballStandingLocalUpdateService.isReflected(impact, 38, 38)).thenReturn(false);
+        when(apiFootballStandingLocalUpdateService.isReflected(
+                org.mockito.ArgumentMatchers.eq(impact), any(), any()
+        )).thenReturn(false);
         when(fixtureRepository.findFinishedWithScoresBySeasonOrderByFixtureDateDesc(
                 org.mockito.ArgumentMatchers.eq(2025),
                 org.mockito.ArgumentMatchers.anyCollection()
@@ -211,7 +213,9 @@ class TeamStandingServiceTest {
         ));
         when(apiFootballStandingLocalUpdateService.findImpacts(2025)).thenReturn(List.of(impact));
         when(apiFootballStandingLocalUpdateService.isLiveImpact(impact)).thenReturn(false);
-        when(apiFootballStandingLocalUpdateService.isReflected(impact, 38, 38)).thenReturn(false);
+        when(apiFootballStandingLocalUpdateService.isReflected(
+                org.mockito.ArgumentMatchers.eq(impact), any(), any()
+        )).thenReturn(false);
         when(fixtureRepository.findFinishedWithScoresBySeasonOrderByFixtureDateDesc(
                 org.mockito.ArgumentMatchers.eq(2025),
                 org.mockito.ArgumentMatchers.anyCollection()
@@ -242,7 +246,9 @@ class TeamStandingServiceTest {
         ));
         when(apiFootballStandingLocalUpdateService.findImpacts(2025)).thenReturn(List.of(impact));
         when(apiFootballStandingLocalUpdateService.isLiveImpact(impact)).thenReturn(false);
-        when(apiFootballStandingLocalUpdateService.isReflected(impact, 38, 38)).thenReturn(true);
+        when(apiFootballStandingLocalUpdateService.isReflected(
+                org.mockito.ArgumentMatchers.eq(impact), any(), any()
+        )).thenReturn(true);
         when(fixtureRepository.findFinishedWithScoresBySeasonOrderByFixtureDateDesc(
                 org.mockito.ArgumentMatchers.eq(2025),
                 org.mockito.ArgumentMatchers.anyCollection()
