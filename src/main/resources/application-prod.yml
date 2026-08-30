@@ -18,7 +18,7 @@ api-football:
       enabled: ${API_FOOTBALL_TEAMS_SYNC_ENABLED:true}
       run-on-startup: ${API_FOOTBALL_TEAMS_SYNC_RUN_ON_STARTUP:false}
       league: ${API_FOOTBALL_TEAMS_LEAGUE:39}
-      season: ${API_FOOTBALL_TEAMS_SEASON:2025}
+      season: ${API_FOOTBALL_TEAMS_SEASON:2026}
       cron: ${API_FOOTBALL_TEAMS_SYNC_CRON:0 0 4 * * *}
     standings:
       enabled: ${API_FOOTBALL_STANDINGS_SYNC_ENABLED:true}
@@ -26,15 +26,16 @@ api-football:
       local-finished-update-enabled: ${API_FOOTBALL_STANDINGS_LOCAL_FINISHED_UPDATE_ENABLED:true}
       local-live-update-enabled: ${API_FOOTBALL_STANDINGS_LOCAL_LIVE_UPDATE_ENABLED:true}
       local-live-impact-ttl-hours: ${API_FOOTBALL_STANDINGS_LOCAL_LIVE_IMPACT_TTL_HOURS:6}
+      local-finished-impact-ttl-hours: ${API_FOOTBALL_STANDINGS_LOCAL_FINISHED_IMPACT_TTL_HOURS:48}
       league: ${API_FOOTBALL_STANDINGS_LEAGUE:39}
-      season: ${API_FOOTBALL_STANDINGS_SEASON:2025}
+      season: ${API_FOOTBALL_STANDINGS_SEASON:2026}
       daily-cron: ${API_FOOTBALL_STANDINGS_DAILY_CRON:0 10 4 * * *}
       live-cron: ${API_FOOTBALL_STANDINGS_LIVE_CRON:0 0 * * * *}
     fixtures:
       enabled: ${API_FOOTBALL_FIXTURES_SYNC_ENABLED:true}
       run-on-startup: ${API_FOOTBALL_FIXTURES_SYNC_RUN_ON_STARTUP:false}
       league: ${API_FOOTBALL_FIXTURES_LEAGUE:39}
-      season: ${API_FOOTBALL_FIXTURES_SEASON:2025}
+      season: ${API_FOOTBALL_FIXTURES_SEASON:2026}
       daily-cron: ${API_FOOTBALL_FIXTURES_DAILY_CRON:0 20 4 * * *}
       live-cron: ${API_FOOTBALL_FIXTURES_LIVE_CRON:0 * * * * *}
       live-window-before-minutes: ${API_FOOTBALL_FIXTURES_LIVE_WINDOW_BEFORE_MINUTES:10}
@@ -51,7 +52,7 @@ api-football:
         enabled: ${API_FOOTBALL_PLAYERS_REGISTERED_SYNC_ENABLED:true}
         run-on-startup: ${API_FOOTBALL_PLAYERS_REGISTERED_SYNC_RUN_ON_STARTUP:false}
         league: ${API_FOOTBALL_PLAYERS_REGISTERED_LEAGUE:39}
-        season: ${API_FOOTBALL_PLAYERS_REGISTERED_SEASON:2025}
+        season: ${API_FOOTBALL_PLAYERS_REGISTERED_SEASON:2026}
         daily-cron: ${API_FOOTBALL_PLAYERS_REGISTERED_DAILY_CRON:0 10 5 * * *}
         delay-ms: ${API_FOOTBALL_PLAYERS_REGISTERED_SYNC_DELAY_MS:2000}
         startup-delay-ms: ${API_FOOTBALL_PLAYERS_REGISTERED_STARTUP_DELAY_MS:2000}
@@ -59,7 +60,7 @@ api-football:
       enabled: ${API_FOOTBALL_INJURIES_SYNC_ENABLED:true}
       run-on-startup: ${API_FOOTBALL_INJURIES_SYNC_RUN_ON_STARTUP:false}
       league: ${API_FOOTBALL_INJURIES_LEAGUE:39}
-      season: ${API_FOOTBALL_INJURIES_SEASON:2025}
+      season: ${API_FOOTBALL_INJURIES_SEASON:2026}
       daily-cron: ${API_FOOTBALL_INJURIES_DAILY_CRON:0 0 5 * * *}
 
 logging:

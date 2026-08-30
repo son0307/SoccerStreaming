@@ -2,6 +2,7 @@ package com.son.soccerStreaming.apifootball.service;
 
 import com.son.soccerStreaming.apifootball.client.ApiFootballClient;
 import com.son.soccerStreaming.apifootball.dto.ApiFootballStandingDto;
+import com.son.soccerStreaming.apifootball.event.StandingSyncCompleted;
 import com.son.soccerStreaming.global.config.RedisCacheConfig;
 import com.son.soccerStreaming.team.entity.Team;
 import com.son.soccerStreaming.team.entity.TeamStanding;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +31,7 @@ public class ApiFootballStandingSyncService {
     private final TeamRepository teamRepository;
     private final TeamStandingRepository teamStandingRepository;
     private final ApiFootballSyncStatusService apiFootballSyncStatusService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Caching(evict = {
             @CacheEvict(
@@ -66,6 +69,7 @@ public class ApiFootballStandingSyncService {
 
         log.info("API-Football standing sync completed. league={}, season={}, count={}", league, season, syncedCount);
         apiFootballSyncStatusService.recordSuccess("standings", "Standings", season);
+        eventPublisher.publishEvent(new StandingSyncCompleted(league, season));
         return syncedCount;
     }
 

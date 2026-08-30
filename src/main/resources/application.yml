@@ -126,6 +126,7 @@ api-football:
       local-finished-update-enabled: ${API_FOOTBALL_STANDINGS_LOCAL_FINISHED_UPDATE_ENABLED:false}
       local-live-update-enabled: ${API_FOOTBALL_STANDINGS_LOCAL_LIVE_UPDATE_ENABLED:false}
       local-live-impact-ttl-hours: ${API_FOOTBALL_STANDINGS_LOCAL_LIVE_IMPACT_TTL_HOURS:6}
+      local-finished-impact-ttl-hours: ${API_FOOTBALL_STANDINGS_LOCAL_FINISHED_IMPACT_TTL_HOURS:48}
       league: ${API_FOOTBALL_STANDINGS_LEAGUE:39}
       season: ${API_FOOTBALL_STANDINGS_SEASON:2025}
       daily-cron: ${API_FOOTBALL_STANDINGS_DAILY_CRON:0 10 4 * * *}

@@ -8,10 +8,15 @@ import {
   type CurrentUser,
   type RecentForm,
   type StandingRecord,
+  type StandingLiveMatch,
+  type StandingNextMatch,
+  type StandingRecentMatch,
   type SyncStatus,
   type TeamStanding,
 } from "../api";
 import { displayLocalizedName } from "../teamNames";
+import { fixtureStatusLabel } from "../fixtureStatus";
+import { formatFixtureDate, formatFixtureDateTime } from "../dateUtils";
 import { SyncToast } from "../components/SyncToast";
 import { useManualSyncCooldown } from "../useManualSyncCooldown";
 
@@ -54,7 +59,7 @@ export function LeagueStandingsPage({ currentUser, season }: { currentUser: Curr
     setErrorMessage("");
 
     try {
-      const nextStandings = await fetchStandings(targetSeason);
+      const nextStandings = await fetchStandings(targetSeason, { fresh: true });
       if (requestId === standingsRequestIdRef.current) {
         setStandings(nextStandings);
       }
@@ -186,6 +191,7 @@ function StandingsTable({ rows }: { rows: StandingRow[] }) {
             <th>+/-</th>
             <th>승점</th>
             <th>기록</th>
+            <th>다음</th>
           </tr>
         </thead>
         <tbody>
@@ -203,6 +209,7 @@ function StandingsTable({ rows }: { rows: StandingRow[] }) {
                 <Link className="team-name-link" to={`/teams/${row.teamId}`}>
                   {row.teamName}
                 </Link>
+                {row.liveMatch ? <LiveScoreBadge liveMatch={row.liveMatch} /> : null}
               </td>
               <td>{row.played}</td>
               <td>{row.win}</td>
@@ -212,7 +219,18 @@ function StandingsTable({ rows }: { rows: StandingRow[] }) {
               <td>{row.goalsDiffText}</td>
               <td className="points-cell">{row.points}</td>
               <td>
-                <ResultChips results={row.results} />
+                <ResultChips
+                  matches={row.recentMatches}
+                  results={row.results}
+                  teamName={row.teamName}
+                />
+              </td>
+              <td>
+                {row.nextMatch ? (
+                  <NextMatchLink nextMatch={row.nextMatch} teamName={row.teamName} />
+                ) : (
+                  <span className="muted">-</span>
+                )}
               </td>
             </tr>
           ))}
@@ -222,19 +240,104 @@ function StandingsTable({ rows }: { rows: StandingRow[] }) {
   );
 }
 
-function ResultChips({ results }: { results: string[] }) {
+function LiveScoreBadge({ liveMatch }: { liveMatch: StandingLiveMatch }) {
+  const score = `${liveMatch.scoreFor}-${liveMatch.scoreAgainst}`;
+  const status = fixtureStatusLabel({
+    fixtureStatus: "LIVE",
+    statusShort: liveMatch.statusShort,
+    statusLong: null,
+    elapsed: liveMatch.elapsed,
+    extra: liveMatch.extra,
+  });
+  const resultLabel = liveMatch.result === "WINNING"
+    ? "이기는 중"
+    : liveMatch.result === "LOSING"
+      ? "지는 중"
+      : "동점";
+
+  return (
+    <Link
+      className={`standing-live-score ${liveMatch.result.toLowerCase()}`}
+      to={`/fixtures/${liveMatch.fixtureId}`}
+      title={`${status} · ${score} ${resultLabel}`}
+      aria-label={`진행 중인 경기 ${status}, ${score}, ${resultLabel}`}
+    >
+      {score}
+    </Link>
+  );
+}
+
+function ResultChips({
+  matches,
+  results,
+  teamName,
+}: {
+  matches: StandingRecentMatch[];
+  results: string[];
+  teamName: string;
+}) {
   if (!results.length) {
     return <span className="muted">-</span>;
   }
 
   return (
     <div className="result-chips" aria-label={`최근 기록 ${results.join("")}`}>
-      {results.map((result, index) => (
-        <span className={`result-chip ${result.toLowerCase()}`} key={`${result}-${index}`}>
-          {translateResult(result)}
-        </span>
-      ))}
+      {matches.length
+        ? matches.map((match) => <RecentMatchChip key={match.fixtureId} match={match} teamName={teamName} />)
+        : results.map((result, index) => (
+            <span className={`result-chip ${result.toLowerCase()}`} key={`${result}-${index}`}>
+              {translateResult(result)}
+            </span>
+          ))}
     </div>
+  );
+}
+
+function NextMatchLink({ nextMatch, teamName }: { nextMatch: StandingNextMatch; teamName: string }) {
+  const opponentName = displayLocalizedName(nextMatch.opponent?.nameKo, nextMatch.opponent?.name);
+  const date = formatFixtureDateTime(nextMatch.fixtureDate, "일정 미정");
+  const matchup = nextMatch.venue === "HOME"
+    ? `${teamName} vs ${opponentName}`
+    : `${opponentName} vs ${teamName}`;
+  const description = `${date} · ${matchup}`;
+
+  return (
+    <Link
+      className="standing-next-match"
+      to={`/fixtures/${nextMatch.fixtureId}`}
+      aria-label={`${description}, 경기 상세 보기`}
+    >
+      {nextMatch.opponent?.logo ? (
+        <img src={nextMatch.opponent.logo} alt="" />
+      ) : (
+        <span className="standing-next-match-placeholder" aria-hidden="true" />
+      )}
+      <span className="result-chip-tooltip" role="tooltip">
+        {description}
+      </span>
+    </Link>
+  );
+}
+
+function RecentMatchChip({ match, teamName }: { match: StandingRecentMatch; teamName: string }) {
+  const opponentName = displayLocalizedName(match.opponent?.nameKo, match.opponent?.name);
+  const date = formatFixtureDate(match.fixtureDate, "날짜 미정");
+  const matchup = match.venue === "HOME"
+    ? `${teamName} ${match.scoreFor}-${match.scoreAgainst} ${opponentName}`
+    : `${opponentName} ${match.scoreAgainst}-${match.scoreFor} ${teamName}`;
+  const description = `${date} · ${matchup}`;
+
+  return (
+    <Link
+      className={`result-chip ${match.result.toLowerCase()}`}
+      to={`/fixtures/${match.fixtureId}`}
+      aria-label={`${description}, 경기 상세 보기`}
+    >
+      {translateResult(match.result)}
+      <span className="result-chip-tooltip" role="tooltip">
+        {description}
+      </span>
+    </Link>
   );
 }
 
@@ -298,12 +401,20 @@ type StandingRow = {
   goalsDiffText: string;
   points: number;
   results: string[];
+  recentMatches: StandingRecentMatch[];
   qualificationClass: string;
+  liveMatch: StandingLiveMatch | null;
+  nextMatch: StandingNextMatch | null;
 };
 
 function toStandingRow(standing: TeamStanding, mode: StandingMode): StandingRow {
   const source = standingRecordForMode(standing, mode);
-  const formResults = parseFormResults(standing.form);
+  const recentMatches = standing.recentForm?.matches?.slice(0, 5) ?? [];
+  const formResults = recentMatches.length
+    ? recentMatches.map((match) => match.result)
+    : standing.recentForm?.results?.length
+      ? standing.recentForm.results.slice(0, 5)
+    : parseFormResults(standing.form);
   const recentSummary = summarizeResults(formResults);
   const goalsFor = valueOf(source?.goals?.goalsFor);
   const goalsAgainst = valueOf(source?.goals?.goalsAgainst);
@@ -332,7 +443,10 @@ function toStandingRow(standing: TeamStanding, mode: StandingMode): StandingRow 
         ? recentSummary.points
         : standingPointsForMode(standing, mode),
     results: formResults,
+    recentMatches,
     qualificationClass: qualificationClassOf(standing.description),
+    liveMatch: mode === "all" ? standing.liveMatch : null,
+    nextMatch: standing.nextMatch,
   };
 }
 

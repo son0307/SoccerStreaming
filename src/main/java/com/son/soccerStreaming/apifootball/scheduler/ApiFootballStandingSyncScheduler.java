@@ -1,6 +1,7 @@
 package com.son.soccerStreaming.apifootball.scheduler;
 
 import com.son.soccerStreaming.apifootball.service.ApiFootballStandingSyncService;
+import com.son.soccerStreaming.apifootball.service.ApiFootballStandingLocalUpdateService;
 import com.son.soccerStreaming.apifootball.service.ApiFootballSyncExecutionGuard;
 import com.son.soccerStreaming.fixture.repository.FixtureRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
 public class ApiFootballStandingSyncScheduler {
 
     private final ApiFootballStandingSyncService apiFootballStandingSyncService;
+    private final ApiFootballStandingLocalUpdateService localUpdateService;
     private final FixtureRepository fixtureRepository;
     private final ApiFootballSyncFailureRetryScheduler failureRetryScheduler;
     private final ApiFootballSyncExecutionGuard executionGuard;
@@ -34,10 +36,12 @@ public class ApiFootballStandingSyncScheduler {
 
     @Scheduled(cron = "${api-football.sync.standings.live-cron:0 0 * * * *}")
     public void syncStandingsHourlyWhenLive() {
-        if (!fixtureRepository.existsByFixtureStatus("LIVE")) {
+        boolean hasLiveFixture = fixtureRepository.existsByFixtureStatus("LIVE");
+        boolean hasFinishedImpact = localUpdateService.hasFinishedImpacts(season);
+        if (!hasLiveFixture && !hasFinishedImpact) {
             return;
         }
-        syncStandings("hourly-live");
+        syncStandings(hasLiveFixture ? "hourly-live" : "hourly-finished-impact");
     }
 
     private void syncStandings(String reason) {

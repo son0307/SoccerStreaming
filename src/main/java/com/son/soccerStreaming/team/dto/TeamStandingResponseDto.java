@@ -23,6 +23,8 @@ public class TeamStandingResponseDto {
     private Record home;
     private Record away;
     private RecentForm recentForm;
+    private LiveMatch liveMatch;
+    private NextMatch nextMatch;
     private LocalDateTime updatedAt;
 
     @Getter
@@ -62,5 +64,39 @@ public class TeamStandingResponseDto {
         private Integer points;
         private Integer goalsDiff;
         private List<String> results;
+        private List<RecentMatch> matches;
+    }
+
+    @Getter
+    @Builder
+    public static class RecentMatch {
+        private Long fixtureId;
+        private LocalDateTime fixtureDate;
+        private TeamInfo opponent;
+        private String venue;
+        private Integer scoreFor;
+        private Integer scoreAgainst;
+        private String result;
+    }
+
+    @Getter
+    @Builder
+    public static class LiveMatch {
+        private Long fixtureId;
+        private Integer scoreFor;
+        private Integer scoreAgainst;
+        private String statusShort;
+        private Integer elapsed;
+        private Integer extra;
+        private String result;
+    }
+
+    @Getter
+    @Builder
+    public static class NextMatch {
+        private Long fixtureId;
+        private LocalDateTime fixtureDate;
+        private TeamInfo opponent;
+        private String venue;
     }
 }
