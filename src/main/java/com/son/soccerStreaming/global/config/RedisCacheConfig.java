@@ -1,7 +1,8 @@
 package com.son.soccerStreaming.global.config;
 
 import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CachingConfigurer;
+import org.springframework.cache.interceptor.CacheErrorHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -15,11 +16,10 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 
 import java.time.Duration;
-import java.util.Map;
 
 @EnableCaching
 @Configuration
-public class RedisCacheConfig {
+public class RedisCacheConfig implements CachingConfigurer {
 
     public static final String TEAM_PLAYER_RANKINGS_CACHE = "teamPlayerRankings";
     public static final String LEAGUE_PLAYER_RANKINGS_CACHE = "leaguePlayerRankings";
@@ -29,40 +29,29 @@ public class RedisCacheConfig {
     public static final String RANKINGS_CACHE_MANAGER = "rankingsCacheManager";
 
     @Bean
+    @Override
+    public CacheErrorHandler errorHandler() {
+        return new RedisCacheErrorHandler();
+    }
+
+    @Bean
     @Primary
-    public RedisCacheManager cacheManager(
-            RedisConnectionFactory connectionFactory,
-            @Value("${app.cache.favorite-card-ttl:30s}") Duration favoriteCardTtl
-    ) {
+    public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory) {
         RedisCacheWriter cacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(connectionFactory);
         RedisCacheConfiguration defaultConfig = defaultCacheConfiguration();
 
         return RedisCacheManager.builder(cacheWriter)
                 .cacheDefaults(defaultConfig)
-                .withInitialCacheConfigurations(Map.of(
-                        FAVORITE_TEAM_CARD_CACHE, defaultConfig.entryTtl(favoriteCardTtl),
-                        FAVORITE_PLAYER_CARD_CACHE, defaultConfig.entryTtl(favoriteCardTtl)
-                ))
                 .build();
     }
 
     @Bean(name = RANKINGS_CACHE_MANAGER)
-    public RedisCacheManager rankingsCacheManager(
-            RedisConnectionFactory connectionFactory,
-            @Value("${app.cache.team-player-rankings-ttl:10m}") Duration teamPlayerRankingsTtl,
-            @Value("${app.cache.league-player-rankings-ttl:30s}") Duration leaguePlayerRankingsTtl,
-            @Value("${app.cache.league-team-rankings-ttl:30s}") Duration leagueTeamRankingsTtl
-    ) {
+    public RedisCacheManager rankingsCacheManager(RedisConnectionFactory connectionFactory) {
         RedisCacheWriter cacheWriter = RedisCacheWriter.lockingRedisCacheWriter(connectionFactory);
         RedisCacheConfiguration defaultConfig = defaultCacheConfiguration();
 
         return RedisCacheManager.builder(cacheWriter)
                 .cacheDefaults(defaultConfig)
-                .withInitialCacheConfigurations(Map.of(
-                        TEAM_PLAYER_RANKINGS_CACHE, defaultConfig.entryTtl(teamPlayerRankingsTtl),
-                        LEAGUE_PLAYER_RANKINGS_CACHE, defaultConfig.entryTtl(leaguePlayerRankingsTtl),
-                        LEAGUE_TEAM_RANKINGS_CACHE, defaultConfig.entryTtl(leagueTeamRankingsTtl)
-                ))
                 .build();
     }
 
@@ -77,7 +66,7 @@ public class RedisCacheConfig {
                         .build();
 
         return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofMinutes(5))
+                .entryTtl(Duration.ofMinutes(10))
                 .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(serializer));
     }

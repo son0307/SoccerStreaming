@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -24,6 +25,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -49,7 +51,7 @@ class ApiFootballStandingLocalUpdateServiceTest {
         ReflectionTestUtils.setField(service, "league", 39);
         ReflectionTestUtils.setField(service, "liveImpactTtlHours", 6L);
         ReflectionTestUtils.setField(service, "finishedImpactTtlHours", 48L);
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        org.mockito.Mockito.lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
@@ -150,6 +152,34 @@ class ApiFootballStandingLocalUpdateServiceTest {
         service.reconcileFinishedImpacts(39, 2025);
 
         verify(redisTemplate, never()).delete(key);
+    }
+
+    @Test
+    void returnsNoImpactsWhenRedisIsUnavailable() {
+        when(redisTemplate.keys("standing:live-impact:2025:*"))
+                .thenThrow(new DataAccessResourceFailureException("Redis unavailable"));
+
+        assertThat(service.findImpacts(2025)).isEmpty();
+    }
+
+    @Test
+    void continuesFixtureSyncWhenRedisImpactReadAndWriteFail() throws Exception {
+        Team home = team(42L);
+        Team away = team(50L);
+        Fixture fixture = fixture(home, away, "1H", 1, 0);
+        String key = "standing:live-impact:2025:100";
+
+        when(valueOperations.get(key))
+                .thenThrow(new DataAccessResourceFailureException("Redis unavailable"));
+        when(teamStandingRepository.findByTeamTeamIdAndLeagueIdAndSeason(42L, 39, 2025))
+                .thenReturn(Optional.of(standing(home, 10)));
+        when(teamStandingRepository.findByTeamTeamIdAndLeagueIdAndSeason(50L, 39, 2025))
+                .thenReturn(Optional.of(standing(away, 12)));
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        org.mockito.Mockito.doThrow(new DataAccessResourceFailureException("Redis unavailable"))
+                .when(valueOperations).set(eq(key), eq("{}"), eq(Duration.ofHours(6)));
+
+        assertThatCode(() -> service.applyFixtureState(fixture)).doesNotThrowAnyException();
     }
 
     private Fixture fixture(Team home, Team away, String statusShort, int homeScore, int awayScore) {

@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
@@ -92,14 +93,30 @@ public class ApiFootballStandingLocalUpdateService {
     }
 
     public List<LiveStandingImpact> findImpacts(Integer season) {
-        Set<String> keys = redisTemplate.keys(LIVE_IMPACT_PATTERN.formatted(season));
+        Set<String> keys;
+        try {
+            keys = redisTemplate.keys(LIVE_IMPACT_PATTERN.formatted(season));
+        } catch (DataAccessException e) {
+            log.warn("Redis standing impact 목록 조회 실패; 공식 DB 순위만 사용합니다. season={}", season, e);
+            return List.of();
+        }
         if (keys == null || keys.isEmpty()) {
             return List.of();
         }
 
         List<LiveStandingImpact> impacts = new ArrayList<>();
         for (String key : keys) {
-            String impactJson = redisTemplate.opsForValue().get(key);
+            String impactJson;
+            try {
+                impactJson = redisTemplate.opsForValue().get(key);
+            } catch (DataAccessException e) {
+                log.warn("Redis standing impact 조회 실패; 해당 impact를 건너뜁니다. key={}", key, e);
+                continue;
+            }
+            if (impactJson == null) {
+                log.warn("Redis standing impact key was found but its value could not be read. key={}", key);
+                continue;
+            }
             readImpact(key, impactJson).ifPresent(impacts::add);
         }
         return impacts;
@@ -110,8 +127,21 @@ public class ApiFootballStandingLocalUpdateService {
     }
 
     public void reconcileFinishedImpacts(Integer league, Integer season) {
-        for (LiveStandingImpact impact : findImpacts(season)) {
+        List<LiveStandingImpact> impacts = findImpacts(season);
+        log.info("Finished standing impact reconciliation started. league={}, season={}, impactCount={}",
+                league, season, impacts.size());
+
+        for (LiveStandingImpact impact : impacts) {
+            log.info("Redis standing impact loaded. fixtureId={}, season={}, status={}, score={}-{}, " +
+                            "homeTeamId={}, awayTeamId={}, appliedAt={}, homeBaseline=[{}], awayBaseline=[{}]",
+                    impact.getFixtureId(), impact.getSeason(), impact.getStatusShort(),
+                    impact.getHomeScore(), impact.getAwayScore(), impact.getHomeTeamId(), impact.getAwayTeamId(),
+                    impact.getAppliedAt(), describeBaseline(impact.getHomeBaseline()),
+                    describeBaseline(impact.getAwayBaseline()));
+
             if (!isFinished(impact.getStatusShort())) {
+                log.info("Standing impact skipped because it is not finished. fixtureId={}, status={}",
+                        impact.getFixtureId(), impact.getStatusShort());
                 continue;
             }
 
@@ -124,15 +154,32 @@ public class ApiFootballStandingLocalUpdateService {
             Optional<TeamStanding> homeStanding = findStanding(impact.getHomeTeamId(), league, season);
             Optional<TeamStanding> awayStanding = findStanding(impact.getAwayTeamId(), league, season);
             if (homeStanding.isEmpty() || awayStanding.isEmpty()) {
+                log.warn("Authoritative standing not found during impact reconciliation. fixtureId={}, " +
+                                "homeTeamId={}, homeFound={}, awayTeamId={}, awayFound={}",
+                        impact.getFixtureId(), impact.getHomeTeamId(), homeStanding.isPresent(),
+                        impact.getAwayTeamId(), awayStanding.isPresent());
                 continue;
             }
 
             StandingBaseline currentHome = toBaseline(homeStanding.get(), true);
             StandingBaseline currentAway = toBaseline(awayStanding.get(), false);
-            if (isReflected(impact, currentHome, currentAway)) {
-                deleteImpact(impact.getFixtureId(), season);
+            log.info("Authoritative standings loaded for impact reconciliation. fixtureId={}, " +
+                            "currentHome=[{}], currentAway=[{}]",
+                    impact.getFixtureId(), describeBaseline(currentHome), describeBaseline(currentAway));
+
+            ReflectionCheck reflectionCheck = checkReflection(impact, currentHome, currentAway);
+            if (!reflectionCheck.reflected()) {
+                log.warn("Finished standing impact not reflected. fixtureId={}, mismatches={}",
+                        impact.getFixtureId(), String.join("; ", reflectionCheck.mismatches()));
+                continue;
+            }
+
+            if (deleteImpact(impact.getFixtureId(), season)) {
                 log.info("Finished standing impact removed after authoritative standings reflected fixture. " +
-                                "fixtureId={}, season={}", impact.getFixtureId(), season);
+                        "fixtureId={}, season={}", impact.getFixtureId(), season);
+            } else {
+                log.warn("Finished standing impact matched but Redis key was not deleted. fixtureId={}, season={}, key={}",
+                        impact.getFixtureId(), season, liveImpactKey(impact.getFixtureId(), season));
             }
         }
     }
@@ -140,11 +187,7 @@ public class ApiFootballStandingLocalUpdateService {
     public boolean isReflected(LiveStandingImpact impact,
                                StandingBaseline currentHome,
                                StandingBaseline currentAway) {
-        return hasDetailedBaseline(impact)
-                && includesFixtureResult(currentHome, impact.getHomeBaseline(),
-                impact.getHomeScore(), impact.getAwayScore())
-                && includesFixtureResult(currentAway, impact.getAwayBaseline(),
-                impact.getAwayScore(), impact.getHomeScore());
+        return checkReflection(impact, currentHome, currentAway).reflected();
     }
 
     public boolean isLiveImpact(LiveStandingImpact impact) {
@@ -195,28 +238,74 @@ public class ApiFootballStandingLocalUpdateService {
                 .build();
     }
 
-    private boolean includesFixtureResult(StandingBaseline current, StandingBaseline baseline,
-                                          int goalsFor, int goalsAgainst) {
-        if (current == null || baseline == null || !isUpdatedAfterBaseline(current, baseline)) {
-            return false;
+    private ReflectionCheck checkReflection(LiveStandingImpact impact,
+                                            StandingBaseline currentHome,
+                                            StandingBaseline currentAway) {
+        List<String> mismatches = new ArrayList<>();
+        if (!hasDetailedBaseline(impact)) {
+            mismatches.add("detailed baseline missing");
+            return new ReflectionCheck(false, mismatches);
+        }
+
+        collectFixtureMismatches("home", currentHome, impact.getHomeBaseline(),
+                impact.getHomeScore(), impact.getAwayScore(), mismatches);
+        collectFixtureMismatches("away", currentAway, impact.getAwayBaseline(),
+                impact.getAwayScore(), impact.getHomeScore(), mismatches);
+        return new ReflectionCheck(mismatches.isEmpty(), mismatches);
+    }
+
+    private void collectFixtureMismatches(String side,
+                                          StandingBaseline current,
+                                          StandingBaseline baseline,
+                                          int goalsFor,
+                                          int goalsAgainst,
+                                          List<String> mismatches) {
+        if (current == null) {
+            mismatches.add(side + ".current missing");
+            return;
+        }
+        if (baseline == null) {
+            mismatches.add(side + ".baseline missing");
+            return;
+        }
+
+        if (!isUpdatedAfterBaseline(current, baseline)) {
+            mismatches.add("%s.apiUpdatedAt expected>%s actual=%s".formatted(
+                    side, baseline.getApiUpdatedAt(), current.getApiUpdatedAt()));
         }
 
         boolean win = goalsFor > goalsAgainst;
         boolean draw = goalsFor == goalsAgainst;
         boolean lose = goalsFor < goalsAgainst;
-        return hasIncreasedBy(current.getPlayed(), baseline.getPlayed(), 1)
-                && hasIncreasedBy(current.getPoints(), baseline.getPoints(), pointsFor(goalsFor, goalsAgainst))
-                && hasIncreasedBy(current.getWin(), baseline.getWin(), win ? 1 : 0)
-                && hasIncreasedBy(current.getDraw(), baseline.getDraw(), draw ? 1 : 0)
-                && hasIncreasedBy(current.getLose(), baseline.getLose(), lose ? 1 : 0)
-                && hasIncreasedBy(current.getGoalsFor(), baseline.getGoalsFor(), goalsFor)
-                && hasIncreasedBy(current.getGoalsAgainst(), baseline.getGoalsAgainst(), goalsAgainst)
-                && hasIncreasedBy(current.getVenuePlayed(), baseline.getVenuePlayed(), 1)
-                && hasIncreasedBy(current.getVenueWin(), baseline.getVenueWin(), win ? 1 : 0)
-                && hasIncreasedBy(current.getVenueDraw(), baseline.getVenueDraw(), draw ? 1 : 0)
-                && hasIncreasedBy(current.getVenueLose(), baseline.getVenueLose(), lose ? 1 : 0)
-                && hasIncreasedBy(current.getVenueGoalsFor(), baseline.getVenueGoalsFor(), goalsFor)
-                && hasIncreasedBy(current.getVenueGoalsAgainst(), baseline.getVenueGoalsAgainst(), goalsAgainst);
+        addMismatchIfNeeded(mismatches, side + ".played", current.getPlayed(), baseline.getPlayed(), 1);
+        addMismatchIfNeeded(mismatches, side + ".points", current.getPoints(), baseline.getPoints(),
+                pointsFor(goalsFor, goalsAgainst));
+        addMismatchIfNeeded(mismatches, side + ".win", current.getWin(), baseline.getWin(), win ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".draw", current.getDraw(), baseline.getDraw(), draw ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".lose", current.getLose(), baseline.getLose(), lose ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".goalsFor", current.getGoalsFor(), baseline.getGoalsFor(), goalsFor);
+        addMismatchIfNeeded(mismatches, side + ".goalsAgainst",
+                current.getGoalsAgainst(), baseline.getGoalsAgainst(), goalsAgainst);
+        addMismatchIfNeeded(mismatches, side + ".venuePlayed",
+                current.getVenuePlayed(), baseline.getVenuePlayed(), 1);
+        addMismatchIfNeeded(mismatches, side + ".venueWin",
+                current.getVenueWin(), baseline.getVenueWin(), win ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".venueDraw",
+                current.getVenueDraw(), baseline.getVenueDraw(), draw ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".venueLose",
+                current.getVenueLose(), baseline.getVenueLose(), lose ? 1 : 0);
+        addMismatchIfNeeded(mismatches, side + ".venueGoalsFor",
+                current.getVenueGoalsFor(), baseline.getVenueGoalsFor(), goalsFor);
+        addMismatchIfNeeded(mismatches, side + ".venueGoalsAgainst",
+                current.getVenueGoalsAgainst(), baseline.getVenueGoalsAgainst(), goalsAgainst);
+    }
+
+    private void addMismatchIfNeeded(List<String> mismatches, String field,
+                                     Integer current, Integer baseline, int delta) {
+        if (!hasIncreasedBy(current, baseline, delta)) {
+            Integer expected = baseline != null ? baseline + delta : null;
+            mismatches.add("%s expected>=%s actual=%s".formatted(field, expected, current));
+        }
     }
 
     private boolean isUpdatedAfterBaseline(StandingBaseline current, StandingBaseline baseline) {
@@ -261,8 +350,14 @@ public class ApiFootballStandingLocalUpdateService {
     }
 
     private Optional<LiveStandingImpact> findImpact(Long fixtureId, Integer season) {
-        String impactJson = redisTemplate.opsForValue().get(liveImpactKey(fixtureId, season));
-        return readImpact(liveImpactKey(fixtureId, season), impactJson);
+        String key = liveImpactKey(fixtureId, season);
+        try {
+            return readImpact(key, redisTemplate.opsForValue().get(key));
+        } catch (DataAccessException e) {
+            log.warn("Redis standing impact 조회 실패; 기존 impact 없이 처리를 계속합니다. " +
+                    "fixtureId={}, season={}", fixtureId, season, e);
+            return Optional.empty();
+        }
     }
 
     private Optional<LiveStandingImpact> readImpact(String key, String impactJson) {
@@ -273,7 +368,7 @@ public class ApiFootballStandingLocalUpdateService {
             return Optional.of(objectMapper.readValue(impactJson, LiveStandingImpact.class));
         } catch (JacksonException e) {
             log.error("Failed to deserialize Redis standing live impact. key={}", key, e);
-            redisTemplate.delete(key);
+            deleteKeySafely(key);
             return Optional.empty();
         }
     }
@@ -292,11 +387,29 @@ public class ApiFootballStandingLocalUpdateService {
         } catch (JacksonException e) {
             log.error("Failed to serialize Redis standing live impact. fixtureId={}, season={}",
                     impact.getFixtureId(), impact.getSeason(), e);
+        } catch (DataAccessException e) {
+            log.warn("Redis standing impact 저장 실패; 경기 동기화를 계속합니다. fixtureId={}, season={}",
+                    impact.getFixtureId(), impact.getSeason(), e);
         }
     }
 
-    private void deleteImpact(Long fixtureId, Integer season) {
-        redisTemplate.delete(liveImpactKey(fixtureId, season));
+    private boolean deleteImpact(Long fixtureId, Integer season) {
+        String key = liveImpactKey(fixtureId, season);
+        try {
+            return Boolean.TRUE.equals(redisTemplate.delete(key));
+        } catch (DataAccessException e) {
+            log.warn("Redis standing impact 삭제 실패; 원본 데이터 처리를 계속합니다. " +
+                    "fixtureId={}, season={}", fixtureId, season, e);
+            return false;
+        }
+    }
+
+    private void deleteKeySafely(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (DataAccessException e) {
+            log.warn("Redis standing impact 정리 실패. key={}", key, e);
+        }
     }
 
     private String liveImpactKey(Long fixtureId, Integer season) {
@@ -304,6 +417,22 @@ public class ApiFootballStandingLocalUpdateService {
     }
 
     private record BaselinePair(StandingBaseline home, StandingBaseline away) {
+    }
+
+    private record ReflectionCheck(boolean reflected, List<String> mismatches) {
+    }
+
+    private String describeBaseline(StandingBaseline baseline) {
+        if (baseline == null) {
+            return "null";
+        }
+        return ("played=%s, points=%s, win=%s, draw=%s, lose=%s, goalsFor=%s, goalsAgainst=%s, " +
+                "venuePlayed=%s, venueWin=%s, venueDraw=%s, venueLose=%s, venueGoalsFor=%s, " +
+                "venueGoalsAgainst=%s, apiUpdatedAt=%s").formatted(
+                baseline.getPlayed(), baseline.getPoints(), baseline.getWin(), baseline.getDraw(), baseline.getLose(),
+                baseline.getGoalsFor(), baseline.getGoalsAgainst(), baseline.getVenuePlayed(), baseline.getVenueWin(),
+                baseline.getVenueDraw(), baseline.getVenueLose(), baseline.getVenueGoalsFor(),
+                baseline.getVenueGoalsAgainst(), baseline.getApiUpdatedAt());
     }
 
     @Getter
